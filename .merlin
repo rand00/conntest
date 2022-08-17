@@ -1,5 +1,5 @@
 
-PKG mirage mirage-block mirage-channel mirage-clock mirage-console mirage-crypto mirage-device mirage-flow mirage-fs mirage-kv mirage-logs mirage-net mirage-random mirage-time mirage-tcpip tcpip 
+PKG mirage mirage-block mirage-channel mirage-clock mirage-console mirage-crypto mirage-device mirage-flow mirage-fs mirage-kv mirage-logs mirage-net mirage-random mirage-time tcpip 
 PKG lwt
 
 #S .
