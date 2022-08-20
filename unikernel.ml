@@ -39,35 +39,38 @@ module Main (S : Tcpip.Stack.V4) = struct
     S.UDPV4.listen (S.udpv4 stack) ~port callback
 
   let start stack =
-    (*goto iter through list of --listen and register callbacks*)
-    begin
+    let stop_t, stop =
+      let mvar = Lwt_mvar.create_empty () in
+      Lwt_mvar.take mvar, Lwt_mvar.put mvar
+    in
+    Lwt.async begin fun () -> 
       Key_gen.listen ()
-      |> List.iter (function
+      |> Lwt_list.iter_p (function
         | "tcp" :: port :: [] ->
           begin match int_of_string_opt port with
-            | Some port -> listen_tcp stack port
+            | Some port -> listen_tcp stack port |> Lwt.return
             | None -> 
               Logs.err (fun m -> m "Error: Port '%s' is malformed" port);
-              (*> goto how to exit correctly?*)
-              exit 1
+              stop ()
           end
         | "udp" :: port :: [] ->
           begin match int_of_string_opt port with
-            | Some port -> listen_udp stack port
+            | Some port -> listen_udp stack port |> Lwt.return
             | None -> 
               Logs.err (fun m -> m "Error: Port '%s' is malformed" port);
-              exit 1
+              stop ()
           end
         | protocol :: _port :: [] -> 
-          Logs.err (fun m -> m "Error: Protocol '%s' not supported" protocol)
+          Logs.err (fun m -> m "Error: Protocol '%s' not supported" protocol);
+          stop ()
         | strs -> 
           Logs.err (fun m ->
             m "Error: Bad format given to --listen. You passed: '%s'"
               (String.concat ":" strs)
           );
-          exit 1
+          stop ()
       )
     end;
-    S.listen stack
+    Lwt.pick [ stop_t; S.listen stack ]
 
 end
