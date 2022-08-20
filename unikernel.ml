@@ -1,42 +1,42 @@
 open Lwt.Infix
 
-module Main (S : Tcpip.Stack.V4) = struct
+module Main (S : Tcpip.Stack.V4V6) = struct
 
   (*goto 'unlisten' at_exit*)
   (* Mirage_runtime.at_exit *)
   let listen_tcp stack port =
     let callback flow =
-      let dst, dst_port = S.TCPV4.dst flow in
+      let dst, dst_port = S.TCP.dst flow in
       Logs.info (fun m ->
-        m "new tcp connection from IP %s on port %d"
-          (Ipaddr.V4.to_string dst) dst_port);
-      S.TCPV4.read flow >>= function
+        m "new tcp connection from IP '%s' on port '%d'"
+          (Ipaddr.to_string dst) dst_port);
+      S.TCP.read flow >>= function
       | Ok `Eof ->
         Logs.info (fun f -> f "Closing connection!");
         Lwt.return_unit
       | Error e ->
         Logs.warn (fun f ->
           f "Error reading data from established connection: %a"
-            S.TCPV4.pp_error e);
+            S.TCP.pp_error e);
         Lwt.return_unit
       | Ok (`Data b) ->
         Logs.debug (fun f ->
           f "read: %d bytes:\n%s" (Cstruct.length b) (Cstruct.to_string b));
-        S.TCPV4.close flow
+        S.TCP.close flow
     in
-    S.TCPV4.listen (S.tcpv4 stack) ~port callback
+    S.TCP.listen (S.tcp stack) ~port callback
 
   (*goto 'unlisten' at_exit*)
   let listen_udp stack port =
     let callback ~src:_ ~dst ~src_port:_ data =
       Logs.info (fun m ->
-        m "new udp connection from IP %s on port %d"
-          (Ipaddr.V4.to_string dst) port);
+        m "new udp connection from IP '%s' on port '%d'"
+          (Ipaddr.to_string dst) port);
       Logs.debug (fun f ->
         f "read: %d bytes:\n%s" (Cstruct.length data) (Cstruct.to_string data));
       Lwt.return_unit
     in
-    S.UDPV4.listen (S.udpv4 stack) ~port callback
+    S.UDP.listen (S.udp stack) ~port callback
 
   let start stack =
     let stop_t, stop =

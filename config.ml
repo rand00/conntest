@@ -52,8 +52,8 @@ let keys = [
   key connections;
 ]
 
-let main = main ~keys "Unikernel.Main" (stackv4 @-> job)
+let main = main ~keys "Unikernel.Main" (stackv4v6 @-> job)
 
-let stack = generic_stackv4 default_network
+let stack = generic_stackv4v6 default_network
 
 let () = register "conntest" [ main $ stack ]
