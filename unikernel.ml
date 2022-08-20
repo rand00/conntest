@@ -41,7 +41,7 @@ module Main (S : Tcpip.Stack.V4V6) = struct
     );
     S.UDP.listen (S.udp stack) ~port callback
 
-  let try_register_listeners ~stack ~stop = function
+  let try_register_listener ~stack ~stop = function
     | "tcp" :: port :: [] ->
       begin match int_of_string_opt port with
         | Some port -> listen_tcp stack port |> Lwt.return
@@ -65,6 +65,31 @@ module Main (S : Tcpip.Stack.V4V6) = struct
           (String.concat ":" strs)
       );
       stop ()
+
+  let log_none msg = function
+    | None -> Logs.err (fun m -> m "%s" msg); None
+    | Some _ as v -> v
+  
+  let try_initiate_connection ~stack ~stop uri_str =
+    let uri = Uri.of_string uri_str in
+    let (let*) = Option.bind in
+    let (let+) x f = Option.map f x in
+    let+ protocol =
+      let* protocol_str =
+        Uri.scheme uri
+        (*> goto make this a Result instead, and log in the end?*)
+        |> log_none (Fmt.str
+            "Error: Protocol was not defined in uri '%s'" uri_str
+        )
+      in
+      int_of_string_opt protocol_str
+    in
+    let ip =
+      let* ip_str = Uri.host uri in
+      Ipaddr.of_string ip_str |> Result.to_option
+    in
+    let options = Uri.query uri in
+    failwith "todo"
   
   let start stack =
     let stop_t, stop =
@@ -73,7 +98,11 @@ module Main (S : Tcpip.Stack.V4V6) = struct
     in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
-      |> Lwt_list.iter_p (try_register_listeners ~stack ~stop)
+      |> Lwt_list.iter_p (try_register_listener ~stack ~stop)
+    end;
+    Lwt.async begin fun () -> 
+      Key_gen.connect ()
+      |> Lwt_list.iter_p (try_initiate_connection ~stack ~stop)
     end;
     Lwt.pick [ stop_t; S.listen stack ]
 
