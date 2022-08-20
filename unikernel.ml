@@ -22,10 +22,10 @@ module Main (S : Tcpip.Stack.V4) = struct
           f "read: %d bytes:\n%s" (Cstruct.length b) (Cstruct.to_string b));
         S.TCPV4.close flow
     in
-    S.TCPV4.listen (S.tcpv4 stack) ~port 
+    S.TCPV4.listen (S.tcpv4 stack) ~port callback
 
   let listen_udp stack port =
-    let callback ~src ~dst ~src_port data =
+    let callback ~src:_ ~dst ~src_port:_ data =
       Logs.info (fun m ->
         m "new udp connection from IP %s on port %d"
           (Ipaddr.V4.to_string dst) port);
@@ -36,8 +36,11 @@ module Main (S : Tcpip.Stack.V4) = struct
     S.UDPV4.listen (S.udpv4 stack) ~port callback
 
   let start stack =
-    (*    let port = Key_gen.port () in*)
     (*goto iter through list of --listen and register callbacks*)
+    begin
+      Key_gen.listen ()
+      |> List.iter (fun _ -> Logs.debug (fun m -> m "Registering listener"))
+    end;
     S.listen stack
 
 end
