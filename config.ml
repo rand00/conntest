@@ -11,17 +11,27 @@ let name =
   in
   Key.(create long_name Arg.(required ~stage:`Run string doc))
 
+let string_list_conv ~sep =
+  let serialize = 
+    let serialize_list x = Fmt.Dump.list x in
+    serialize_list (fun fmt v -> Fmt.pf fmt "%S" v)
+  in
+  let conv = Cmdliner.Arg.(list ~sep string) in
+  let runtime_conv = Fmt.str "(Cmdliner.Arg.(list ~sep:'%c' string))" sep in
+  Key.Arg.conv ~conv ~runtime_conv ~serialize
+
 let listens =
   let long_name = "listen" in
-  let doc =
+  let info_v =
     Key.Arg.info
+      ~docv:"<PROTO>:<PORT>"
       ~doc:"Which protocol and port to listen to respectively, separated \
             by ':'. E.g. tcp:1234"
-      ~docv:"<PROTO>:<PORT>"
       [ long_name ]
   in
-  let key_conv = Key.Arg.(pair ~sep:':' string int) in
-  Key.(create long_name Arg.(opt_all ~stage:`Run key_conv doc))
+  Key.(create long_name
+      Arg.(opt_all ~stage:`Run (string_list_conv ~sep:':') info_v)
+  )
 
 let connections =
   let long_name = "connect" in
