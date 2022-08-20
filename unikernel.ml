@@ -2,6 +2,8 @@ open Lwt.Infix
 
 module Main (S : Tcpip.Stack.V4) = struct
 
+  (*goto 'unlisten' at_exit*)
+  (* Mirage_runtime.at_exit *)
   let listen_tcp stack port =
     let callback flow =
       let dst, dst_port = S.TCPV4.dst flow in
@@ -24,6 +26,7 @@ module Main (S : Tcpip.Stack.V4) = struct
     in
     S.TCPV4.listen (S.tcpv4 stack) ~port callback
 
+  (*goto 'unlisten' at_exit*)
   let listen_udp stack port =
     let callback ~src:_ ~dst ~src_port:_ data =
       Logs.info (fun m ->
@@ -39,7 +42,31 @@ module Main (S : Tcpip.Stack.V4) = struct
     (*goto iter through list of --listen and register callbacks*)
     begin
       Key_gen.listen ()
-      |> List.iter (fun _ -> Logs.debug (fun m -> m "Registering listener"))
+      |> List.iter (function
+        | "tcp" :: port :: [] ->
+          begin match int_of_string_opt port with
+            | Some port -> listen_tcp stack port
+            | None -> 
+              Logs.err (fun m -> m "Error: Port '%s' is malformed" port);
+              (*> goto how to exit correctly?*)
+              exit 1
+          end
+        | "udp" :: port :: [] ->
+          begin match int_of_string_opt port with
+            | Some port -> listen_udp stack port
+            | None -> 
+              Logs.err (fun m -> m "Error: Port '%s' is malformed" port);
+              exit 1
+          end
+        | protocol :: _port :: [] -> 
+          Logs.err (fun m -> m "Error: Protocol '%s' not supported" protocol)
+        | strs -> 
+          Logs.err (fun m ->
+            m "Error: Bad format given to --listen. You passed: '%s'"
+              (String.concat ":" strs)
+          );
+          exit 1
+      )
     end;
     S.listen stack
 
