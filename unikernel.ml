@@ -7,6 +7,9 @@ let result_of_opt msg = function
   | Some v -> Ok v
   | None -> Error (`Msg msg)
 
+let lwt_result_flatten_result = function
+  | Ok result_t -> result_t
+  | Error _ as err -> Lwt.return err
 
 module Main (S : Tcpip.Stack.V4V6) = struct
 
@@ -95,11 +98,13 @@ module Main (S : Tcpip.Stack.V4V6) = struct
 
   module Connect = struct
 
-    let tcp ~port ~ip ~monitor_bandwidth =
+    let tcp ~stack ~port ~ip ~monitor_bandwidth =
       failwith "todo"
 
-    let udp ~port ~ip ~monitor_bandwidth =
-      failwith "todo"
+    let udp ~stack ~port ~ip ~monitor_bandwidth =
+      let data = Cstruct.of_string "miav" in
+      S.UDP.write ~dst:ip ~dst_port:port (S.udp stack) data
+      |> Lwt_result.map_error (fun err -> `Udp err)
     
   end
   
@@ -147,15 +152,20 @@ module Main (S : Tcpip.Stack.V4V6) = struct
         ) (Ok false)
       in
       match protocol with
-      | `Tcp -> Connect.tcp ~port ~ip ~monitor_bandwidth
-      | `Udp -> Connect.udp ~port ~ip ~monitor_bandwidth
+      | `Tcp -> Connect.tcp ~stack ~port ~ip ~monitor_bandwidth
+      | `Udp -> Connect.udp ~stack ~port ~ip ~monitor_bandwidth
     end
-    |> function
+    |> lwt_result_flatten_result >>= function
     | Ok () -> Lwt.return_unit
     | Error (`Msg msg) ->
       Logs.err (fun m -> m "Error: try_initiate_connection: %s" msg);
       exit 1
-  
+    | Error (`Udp udp_err) ->
+      Logs.err (fun m -> m "Error: try_initiate_connection: %a"
+          S.UDP.pp_error udp_err
+      );
+      exit 1
+
   let start stack =
     Lwt.async begin fun () -> 
       Key_gen.listen ()
