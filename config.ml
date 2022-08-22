@@ -52,7 +52,11 @@ let keys = [
   key connections;
 ]
 
-let main = main ~keys "Unikernel.Main" (stackv4v6 @-> job)
+let packages = [
+  package "uri";
+]
+
+let main = main ~keys ~packages "Unikernel.Main" (stackv4v6 @-> job)
 
 let stack = generic_stackv4v6 default_network
 
