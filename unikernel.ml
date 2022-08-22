@@ -124,11 +124,15 @@ module Main (S : Tcpip.Stack.V4V6) = struct
         )
       in
       let options = Uri.query uri in
-      let monitor_bandwidth =
-        options |> List.exists (function
-          | "monitor-bandwidth", [] -> true
-          | _ -> false
-        )
+      let* monitor_bandwidth =
+        options |> List.fold_left (fun acc option ->
+          let* acc = acc in
+          match option with 
+          | "monitor-bandwidth", [] -> Ok true
+          | option_name, _ ->
+            let msg = Fmt.str "Unknown option: '%s'" option_name in
+            Error (`Msg msg)
+        ) (Ok false)
       in
       Ok () (*goto goo*)
     end
@@ -139,10 +143,6 @@ module Main (S : Tcpip.Stack.V4V6) = struct
       exit 1
   
   let start stack =
-    let stop_t, stop =
-      let mvar = Lwt_mvar.create_empty () in
-      Lwt_mvar.take mvar, Lwt_mvar.put mvar
-    in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
       |> Lwt_list.iter_p (try_register_listener ~stack)
@@ -151,6 +151,6 @@ module Main (S : Tcpip.Stack.V4V6) = struct
       Key_gen.connect ()
       |> Lwt_list.iter_p (try_initiate_connection ~stack)
     end;
-    Lwt.pick [ stop_t; S.listen stack ]
+    S.listen stack
 
 end
