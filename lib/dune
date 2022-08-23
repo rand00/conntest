@@ -1,7 +1,7 @@
 (library
  (name conntest)
  (public_name conntest)
-; (modules conntest)
+ ;; (modules conntest)
  (flags :standard -w -6-27-32-33-39)
  (libraries
   fmt
