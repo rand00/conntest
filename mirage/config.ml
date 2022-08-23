@@ -53,6 +53,8 @@ let keys = [
 ]
 
 let packages = [
+  package "conntest" ~pin:"git+https://github.com/rand00/conntest.git";
+  (*< add commit to string? e.g. #3c85fff2aba1bbf0d0e7f05427d7e41f9b7a7cc3*)
   package "uri";
 ]
 
