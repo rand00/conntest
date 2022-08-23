@@ -1,0 +1,49 @@
+opam-version: "2.0"
+name:         "conntest"
+maintainer:   "rand00 <oth.rand@gmail.com>"
+authors:      "rand00 <oth.rand@gmail.com>"
+homepage:     "https://github.com/dinosaure/bob"
+bug-reports:  "https://github.com/dinosaure/bob/issues"
+dev-repo:     "git+https://github.com/dinosaure/bob.git"
+doc:          "https://dinosaure.github.io/bob/"
+license:      "MIT"
+synopsis:     "A peer-to-peer file-transfer tool"
+
+build: [ "dune" "build" "-p" name "-j" jobs ]
+run-test: [ "dune" "runtest" "-p" name "-j" jobs ]
+
+depends: [
+  "ocaml"       {>= "4.13.0"}
+  "dune"        {>= "2.8.0"}
+  "fmt"         {>= "0.9.0"}
+  "hxd"         {>= "0.3.2"}
+  "logs"        {>= "0.7.0"}
+  "bheap"       {>= "2.0.0"}
+  "base64"      {>= "3.5.0"}
+  "bigstringaf"
+  "cmdliner"
+  "ipaddr"
+  "mirage-crypto"
+  "psq"
+  "tls"
+  "carton"
+  "progress"
+  "dns-client"
+  "happy-eyeballs"
+  "ca-certs"
+  "ke"          {>= "0.6"}
+  "alcotest"    {with-test}
+  "spoke"
+]
+
+pin-depends: [
+  [ "spoke.dev" "git+https://github.com/dinosaure/spoke.git#61f4e785d22d6002fd396862f75f515355197002" ]
+  [ "carton.dev" "git+https://github.com/mirage/ocaml-git.git#dd5899020dca9af5fb36c5fd3105142fabf8f29e" ]
+  [ "decompress.dev" "git+https://github.com/mirage/decompress.git#4e1eb3cc6b97be64ee6b8cc19df0c7d179bc060e" ]
+  [ "digestif.dev" "git+https://github.com/mirage/digestif.git#2e6a40f8b6839dba40965b077d77ba540fc40715" ]
+  [ "mirage-crypto.dev" "git+https://github.com/dinosaure/mirage-crypto.git#d347b7c0365bb84386ce6002528817cfe7a14837" ]
+  [ "mirage-crypto-pk.dev" "git+https://github.com/dinosaure/mirage-crypto.git#d347b7c0365bb84386ce6002528817cfe7a14837" ]
+  [ "mirage-crypto-ec.dev" "git+https://github.com/dinosaure/mirage-crypto.git#d347b7c0365bb84386ce6002528817cfe7a14837" ]
+  [ "mirage-crypto-rng.dev" "git+https://github.com/dinosaure/mirage-crypto.git#d347b7c0365bb84386ce6002528817cfe7a14837" ]
+  [ "zarith.dev" "git+https://github.com/mirage/Zarith.git#c59525969db1ea75b1be8fc6e274eac3aff5ebb7" ]
+]
