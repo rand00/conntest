@@ -98,17 +98,37 @@ module Main (S : Tcpip.Stack.V4V6) = struct
 
   module Connect = struct
 
-    let tcp ~stack ~port ~ip ~monitor_bandwidth =
-      failwith "todo"
+    let tcp ~stack ~name ~port ~ip ~monitor_bandwidth =
+      begin
+        let open Lwt_result.Infix in
+        S.TCP.create_connection (S.tcp stack) (ip, port)
+        |> Lwt_result.map_error (fun err -> `Connection err)
+        >>= fun flow ->
+        Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
+        let data = Cstruct.of_string @@ "I'm "^name in
+        S.TCP.write flow data
+        |> Lwt_result.map_error (fun err -> `Write err)
+      end
+      |> Lwt_result.map_error (fun err -> `Tcp err)
 
-    let udp ~stack ~port ~ip ~monitor_bandwidth =
-      let data = Cstruct.of_string "miav" in
+    (*goto
+      * this should loop sending packets
+        * and retry + print on some failure
+          * ! have in mind that with notty one can't print
+            * - so this should later be replaced by updating react graph with error
+      * this should send the index of the packet
+        * this way one can count what packets has been lost @ listener
+      * the listener should send a packet back with same index (right away)
+        * so this conntest can check what (roundtrip) latency was of that packet-index
+    *)
+    let udp ~stack ~name ~port ~ip ~monitor_bandwidth =
+      let data = Cstruct.of_string @@ "I'm "^name in
       S.UDP.write ~dst:ip ~dst_port:port (S.udp stack) data
       |> Lwt_result.map_error (fun err -> `Udp err)
     
   end
   
-  let try_initiate_connection ~stack uri_str =
+  let try_initiate_connection ~stack ~name uri_str =
     begin
       let uri = Uri.of_string uri_str in
       let* protocol =
@@ -152,8 +172,8 @@ module Main (S : Tcpip.Stack.V4V6) = struct
         ) (Ok false)
       in
       match protocol with
-      | `Tcp -> Connect.tcp ~stack ~port ~ip ~monitor_bandwidth
-      | `Udp -> Connect.udp ~stack ~port ~ip ~monitor_bandwidth
+      | `Tcp -> Connect.tcp ~stack ~name ~port ~ip ~monitor_bandwidth
+      | `Udp -> Connect.udp ~stack ~name ~port ~ip ~monitor_bandwidth
     end
     |> lwt_result_flatten_result >>= function
     | Ok () -> Lwt.return_unit
@@ -165,15 +185,26 @@ module Main (S : Tcpip.Stack.V4V6) = struct
           S.UDP.pp_error udp_err
       );
       exit 1
+    | Error (`Tcp (`Connection tcp_err)) ->
+      Logs.err (fun m -> m "Error: try_initiate_connection: %a"
+          S.TCP.pp_error tcp_err
+      );
+      exit 1
+    | Error (`Tcp (`Write tcp_err)) ->
+      Logs.err (fun m -> m "Error: try_initiate_connection: %a"
+          S.TCP.pp_write_error tcp_err
+      );
+      exit 1
 
   let start stack =
+    let name = Key_gen.name () in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
       |> Lwt_list.iter_p (try_register_listener ~stack)
     end;
     Lwt.async begin fun () -> 
       Key_gen.connect ()
-      |> Lwt_list.iter_p (try_initiate_connection ~stack)
+      |> Lwt_list.iter_p (try_initiate_connection ~stack ~name)
     end;
     S.listen stack
 
