@@ -3,24 +3,23 @@ open Lwt.Infix
 let (let*) = Result.bind 
 let (let+) x f = Result.map f x 
 
-module Make (S : Tcpip.Stack.V4V6) = struct
+module Make (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
 
   module Listen = struct
 
     let tcp stack port =
+      let module O = O.Listen.Tcp in
       let callback flow =
         let dst, dst_port = S.TCP.dst flow in
-        Logs.info (fun m ->
-          m "new tcp connection from IP '%s' on port '%d'"
-            (Ipaddr.to_string dst) dst_port);
+        O.new_connection ~ip:dst ~port:dst_port;
         S.TCP.read flow >>= function
         | Ok `Eof ->
-          Logs.info (fun f -> f "Closing connection!");
+          O.closing_connection ~ip:dst ~port:dst_port;
           Lwt.return_unit
         | Error e ->
-          Logs.warn (fun f ->
-            f "Error reading data from established connection: %a"
-              S.TCP.pp_error e);
+          let err = Fmt.str "%a" S.TCP.pp_error e in
+          O.error ~ip:dst ~port:dst_port ~err;
+          (*goto possibly add O.closing_connection *)
           Lwt.return_unit
         | Ok (`Data b) ->
           Logs.info (fun f ->

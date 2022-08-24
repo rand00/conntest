@@ -13,7 +13,7 @@ let lwt_result_flatten_result = function
 
 module Main (S : Tcpip.Stack.V4V6) = struct
 
-  module Ct = Conntest.Make(S)
+  module Ct = Conntest.Make(S)(Conntest.Output.Log_stdout)
   
   let try_register_listener ~stack input =
     begin match input with
