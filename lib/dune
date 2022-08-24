@@ -4,11 +4,12 @@
  ;; (modules conntest)
  (flags :standard -w -6-27-32-33-39)
  (libraries
+  mirage-runtime
+  tcpip
   fmt
   logs
   ipaddr
   uri
-  tcpip
   )
  )
 
