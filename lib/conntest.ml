@@ -48,7 +48,7 @@ module Make (S : Tcpip.Stack.V4V6) = struct
 
   end
 
-  module Connect (S : Tcpip.Stack.V4V6) = struct
+  module Connect = struct
 
     let tcp ~stack ~name ~port ~ip ~monitor_bandwidth =
       begin
