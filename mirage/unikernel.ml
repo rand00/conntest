@@ -90,7 +90,7 @@ module Main (S : Tcpip.Stack.V4V6) = struct
       let options = Uri.query uri in
       let+ monitor_bandwidth =
         options |> List.fold_left (fun acc option ->
-          let* acc = acc in
+          let* _acc = acc in
           match option with 
           | "monitor-bandwidth", [] -> Ok true
           | option_name, _ ->
