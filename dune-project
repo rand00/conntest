@@ -1,3 +1,3 @@
-(lang dune 3.4)
+(lang dune 3.3)
 (name conntest)
 
