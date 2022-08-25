@@ -124,7 +124,21 @@ module Main (S : Tcpip.Stack.V4V6) = struct
       );
       exit 1
 
+    (*
+  let test_notty () =
+    let term = Notty_lwt.Term.create () in
+    Mirage_runtime.at_exit (fun () ->
+      Notty_lwt.Term.release term
+    );
+    let rec loop_render () =
+      (*goto find way of sleeping in mirage*)
+    in
+    Lwt.async loop_render
+       *)
+  
   let start stack =
+    (*test_notty ();*)
+    let _ = Uchar.min in
     let name = Key_gen.name () in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
