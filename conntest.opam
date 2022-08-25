@@ -19,5 +19,9 @@ depends: [
   "ipaddr"
   "uri"
   "tcpip"
+  "notty"
 ]
 
+pin-depends: [
+  [ "notty.dev" "git+https://github.com/rand00/notty.git#414_w_mirage" ]
+]
