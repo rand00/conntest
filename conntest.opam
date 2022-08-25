@@ -21,5 +21,3 @@ depends: [
   "tcpip"
 ]
 
-pin-depends: [
-]
