@@ -23,9 +23,8 @@ module Make (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
           O.error ~ip:dst ~port:dst_port ~err;
           (*goto possibly add O.closing_connection *)
           Lwt.return_unit
-        | Ok (`Data b) ->
-          Logs.info (fun f ->
-            f "read: %d bytes:\n%s" (Cstruct.length b) (Cstruct.to_string b));
+        | Ok (`Data data) ->
+          O.data ~ip:dst ~port:dst_port ~data;
           S.TCP.close flow
       in
       Mirage_runtime.at_exit (fun () ->
