@@ -57,6 +57,7 @@ let packages = [
   (*< add commit to string? e.g. #3c85fff2aba1bbf0d0e7f05427d7e41f9b7a7cc3*)
   package "uri";
   package "notty" ~pin:"git+https://github.com/rand00/notty.git#414_w_mirage"
+    ~sublibs:["notty.mirage"]
   (*~sublibs:["lwt"]*)
   (*~pin:"git+https://github.com/kit-ty-kate/notty.git#414"*)
 ]
