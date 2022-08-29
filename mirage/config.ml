@@ -57,13 +57,16 @@ let packages = [
   (*< add commit to string? e.g. #3c85fff2aba1bbf0d0e7f05427d7e41f9b7a7cc3*)
   package "uri";
   package "notty" ~pin:"git+https://github.com/rand00/notty.git#414_w_mirage"
-    ~sublibs:["notty.mirage"]
+    ~sublibs:["mirage"]
   (*~sublibs:["lwt"]*)
   (*~pin:"git+https://github.com/kit-ty-kate/notty.git#414"*)
 ]
 
-let main = main ~keys ~packages "Unikernel.Main" (stackv4v6 @-> job)
+let main = main ~keys ~packages "Unikernel.Main"
+    (console @-> stackv4v6 @-> time @-> job)
 
 let stack = generic_stackv4v6 default_network
+let console = default_console
+let time = default_time
 
-let () = register "conntest" [ main $ stack ]
+let () = register "conntest" [ main $ console $ stack $ time ]
