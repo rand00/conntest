@@ -58,9 +58,19 @@ let packages = [
   package "uri";
   package "notty" ~pin:"git+https://github.com/rand00/notty.git#414_w_mirage"
     ~sublibs:["mirage"]
-  (*~sublibs:["lwt"]*)
   (*~pin:"git+https://github.com/kit-ty-kate/notty.git#414"*)
 ]
+
+(* module Notty = struct
+ *   module F = Functoria 
+ * 
+ *   type notty = NOTTY
+ *   let typ = F.Type.v NOTTY
+ *   (\*>goto pass packages_v + connect?*\)
+ *   let impl = F.impl "Notty_mirage.Terminal_link_of_console" @@ console
+ * 
+ *   (\*goto how to make 2 functor applications in a row?*\)
+ * end *)
 
 let main = main ~keys ~packages "Unikernel.Main"
     (console @-> stackv4v6 @-> time @-> job)
