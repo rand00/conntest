@@ -52,31 +52,56 @@ let keys = [
   key connections;
 ]
 
+(* let notty_pkg =
+ *   package "notty" ~pin:"git+https://github.com/rand00/notty.git#414_w_mirage"
+ *     ~sublibs:["mirage"] *)
+
 let packages = [
   package "conntest" ~pin:"git+https://github.com/rand00/conntest.git";
   (*< add commit to string? e.g. #3c85fff2aba1bbf0d0e7f05427d7e41f9b7a7cc3*)
   package "uri";
   package "notty" ~pin:"git+https://github.com/rand00/notty.git#414_w_mirage"
     ~sublibs:["mirage"]
+  (* notty_pkg; *)
   (*~pin:"git+https://github.com/kit-ty-kate/notty.git#414"*)
 ]
 
-(* module Notty = struct
- *   module F = Functoria 
- * 
- *   type notty = NOTTY
- *   let typ = F.Type.v NOTTY
- *   (\*>goto pass packages_v + connect?*\)
- *   let impl = F.impl "Notty_mirage.Terminal_link_of_console" @@ console
- * 
- *   (\*goto how to make 2 functor applications in a row?*\)
- * end *)
+module Notty_dev = struct
+
+  (*>goto pass packages_v + connect?*)
+  
+  type notty_link = NOTTY_LINK
+  let term_link_typ = Type.v NOTTY_LINK
+  let term_link =
+    let packages = [
+      package "mirage-console";
+      package "notty" ~sublibs:["mirage"]
+    ] in
+    impl ~packages "Notty_mirage.Terminal_link_of_console" (
+      console @-> term_link_typ
+    )
+
+  type notty_term = NOTTY_TERM
+  let term_typ = Type.v NOTTY_TERM
+  let term =
+    let packages = [
+      package "notty" ~sublibs:["mirage"]
+    ] in
+    impl ~packages "Notty_mirage.Term" (
+      term_link_typ @-> term_typ
+    )
+
+  let typ = term_typ
+  let impl console = term $ (term_link $ console)
+  
+end
 
 let main = main ~keys ~packages "Unikernel.Main"
-    (console @-> stackv4v6 @-> time @-> job)
+    (console @-> Notty_dev.typ @-> time @-> stackv4v6 @-> job)
 
-let stack = generic_stackv4v6 default_network
 let console = default_console
 let time = default_time
+let stack = generic_stackv4v6 default_network
 
-let () = register "conntest" [ main $ console $ stack $ time ]
+let () = register "conntest"
+    [ main $ console $ (Notty_dev.impl console) $ time $ stack ]

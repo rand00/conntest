@@ -13,8 +13,9 @@ let lwt_result_flatten_result = function
 
 module Main
     (C : Mirage_console.S)
-    (S : Tcpip.Stack.V4V6)
+    (Notty_term : Notty_mirage.TERM)
     (Time : Mirage_time.S)
+    (S : Tcpip.Stack.V4V6)
 = struct
 
   module Ct = Conntest.Make(S)(Conntest.Output.Log_stdout)
@@ -128,9 +129,6 @@ module Main
       );
       exit 1
 
-  module Term_link = Notty_mirage.Terminal_link_of_console(C)
-  module Term = Notty_mirage.Term(Term_link)
-
   let test_image ~dims:_ i =
     let open Notty in
     I.string ~attr:A.(bg red) @@ Fmt.str "%d" i
@@ -138,16 +136,16 @@ module Main
   let test_notty ~console ~init_size () =
     let open Lwt_result.Syntax in
     begin
-      let* term = Term.create ~init_size console in
+      let* term = Notty_term.create ~init_size console in
       Mirage_runtime.at_exit (fun () ->
-        Term.close term
+        Notty_term.close term
       );
       let fps = 60. in
       let fps_sleep_ns = 1e6 /. fps in
       let rec loop_render i =
         Time.sleep_ns @@ Int64.of_float fps_sleep_ns >>= fun () ->
         let image = test_image ~dims:init_size i in
-        let* () = Term.write term @@ `Image image in
+        let* () = Notty_term.write term @@ `Image image in
         loop_render @@ succ i
       in
       loop_render 0
@@ -158,7 +156,7 @@ module Main
         Logs.err (fun m -> m "ERROR: test_notty")
     )
 
-  let start console stack _time =
+  let start console _notty _time stack =
     let term_size = 70, 11 in
     Lwt.async @@ test_notty ~console ~init_size:term_size;
     let name = Key_gen.name () in
