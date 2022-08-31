@@ -25,6 +25,7 @@ module type S = sig
       val connecting : ip:Ipaddr.t -> port:int -> unit
       val connected : ip:Ipaddr.t -> port:int -> unit
       val writing : ip:Ipaddr.t -> port:int -> data:string -> unit
+      val error_connection : ip:Ipaddr.t -> port:int -> err:string -> unit
       
     end
 
@@ -49,23 +50,23 @@ module Log_stdout : S = struct
       
       let new_connection ~ip ~port =
         Log.info (fun m ->
-          m "new tcp connection from IP '%s' on port '%d'"
+          m "new tcp connection from %s:%d"
             (Ipaddr.to_string ip) port)
 
       let closing_connection ~ip ~port =
-        Log.info (fun f -> f "closing tcp connection with %s:%d !"
+        Log.info (fun f -> f "closing tcp connection to %s:%d"
             (Ipaddr.to_string ip) port
         )
 
       let error ~ip ~port ~err =
         Log.warn (fun f ->
-          f "error reading data from established tcp connection with %s:%d:\n%s"
+          f "error reading data from tcp connection %s:%d:\n%s"
             (Ipaddr.to_string ip) port
             err)
 
       let data ~ip ~port ~data =
         Log.info (fun f ->
-          f "read: %d bytes from %s:%d:\n%s"
+          f "read %d bytes from %s:%d:\n%s"
             (Cstruct.length data)
             (Ipaddr.to_string ip) port
             (Cstruct.to_string data))
@@ -79,7 +80,7 @@ module Log_stdout : S = struct
 
       let data ~ip ~port ~data =
         Log.info (fun f ->
-          f "read: %d bytes from %s:%d:\n%s"
+          f "read %d bytes from %s:%d:\n%s"
             (Cstruct.length data)
             (Ipaddr.to_string ip) port
             (Cstruct.to_string data))
@@ -97,18 +98,24 @@ module Log_stdout : S = struct
 
       let connecting ~ip ~port =
         Log.info (fun m ->
-          m "connecting via tcp to %s on port %d"
+          m "connecting via tcp to %s:%d"
             (Ipaddr.to_string ip) port)
 
       let connected ~ip ~port =
         Log.info (fun m ->
-          m "connected via tcp to %s on port %d"
+          m "connected via tcp to %s:%d"
             (Ipaddr.to_string ip) port)
 
       let writing ~ip ~port ~data =
         Log.info (fun m ->
-          m "writing via tcp to %s on port %d: %s"
+          m "writing via tcp to %s:%d: %s"
             (Ipaddr.to_string ip) port data)
+
+      let error_connection ~ip ~port ~err =
+        Log.warn (fun f ->
+          f "error connecting to %s:%d:\n%s"
+            (Ipaddr.to_string ip) port
+            err)
 
     end
 
