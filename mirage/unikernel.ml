@@ -19,7 +19,7 @@ module Main
 = struct
 
   module Output = Conntest.Output.Log_stdout
-  module Ct = Conntest.Make(S)(Output)
+  module Ct = Conntest.Make(Time)(S)(Output)
   
   let try_register_listener ~stack input =
     begin match input with

@@ -5,7 +5,7 @@ module Output = Output
 let (let*) = Result.bind 
 let (let+) x f = Result.map f x 
 
-module Make (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
+module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
 
   module Listen = struct
 
@@ -51,21 +51,29 @@ module Make (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
 
     let tcp ~stack ~name ~port ~ip ~monitor_bandwidth =
       let module O = O.Connect.Tcp in
-      begin
-        let open Lwt_result.Infix in
+      let rec loop_try_connect () = 
         O.connecting ~ip ~port;
         S.TCP.create_connection (S.tcp stack) (ip, port)
-        |> Lwt_result.map_error (fun err -> `Connection err)
-        >>= fun flow ->
-        O.connected ~ip ~port;
-        Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
-        let data_str = "I'm "^name in
-        let data = Cstruct.of_string data_str in
-        O.writing ~ip ~port ~data:data_str;
-        S.TCP.write flow data
-        |> Lwt_result.map_error (fun err -> `Write err)
-      end
-      |> Lwt_result.map_error (fun err -> `Tcp err)
+        >>= function
+        | Error err ->
+          let err = Fmt.str "%a" S.TCP.pp_error err in
+          O.error_connection ~ip ~port ~err;
+          Time.sleep_ns @@ Int64.of_float 1e9 >>= fun () ->
+          loop_try_connect ()
+        | Ok flow ->
+          O.connected ~ip ~port;
+          Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
+          let data_str = "I'm "^name in
+          let data = Cstruct.of_string data_str in
+          O.writing ~ip ~port ~data:data_str;
+          S.TCP.write flow data
+          (*goto loop sending packets, to:
+            * check if connection is up
+            * check latency
+            * optionally monitor bandwidth
+          *)
+      in
+      loop_try_connect ()
 
     (*goto
       * this should loop sending packets

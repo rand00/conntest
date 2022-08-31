@@ -4,6 +4,7 @@
  (modules conntest output)
  (flags :standard -w -6-27-32-33-39)
  (libraries
+  mirage-time
   mirage-runtime
   tcpip
   fmt
