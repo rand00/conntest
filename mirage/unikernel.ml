@@ -27,7 +27,7 @@ module Main
           | Some port -> Ct.Listen.tcp stack port |> Result.ok
           | None ->
             let msg =
-              Fmt.str "Error: try_register_listener: Port '%s' is malformed" port
+              Fmt.str "try_register_listener: Port '%s' is malformed" port
             in
             Error (`Msg msg)
         end
@@ -36,19 +36,19 @@ module Main
           | Some port -> Ct.Listen.udp stack port |> Result.ok
           | None ->
             let msg =
-              Fmt.str "Error: try_register_listener: Port '%s' is malformed" port
+              Fmt.str "try_register_listener: Port '%s' is malformed" port
             in
             Error (`Msg msg)
         end
       | protocol :: _port :: [] -> 
         let msg = 
-          Fmt.str "Error: try_register_listener: Protocol '%s' not supported"
+          Fmt.str "try_register_listener: Protocol '%s' not supported"
             protocol
         in
         Error (`Msg msg)
       | strs -> 
         let msg = 
-          Fmt.str "Error: try_register_listener: Bad format given to --listen. \
+          Fmt.str "try_register_listener: Bad format given to --listen. \
                    You passed: '%s'"
             (String.concat ":" strs)
         in
@@ -141,7 +141,7 @@ module Main
         Notty_term.close term
       );
       let fps = 60. in
-      let fps_sleep_ns = 1e6 /. fps in
+      let fps_sleep_ns = 1e9 /. fps in
       let rec loop_render i =
         Time.sleep_ns @@ Int64.of_float fps_sleep_ns >>= fun () ->
         let image = test_image ~dims:init_size i in
