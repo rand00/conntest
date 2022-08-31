@@ -30,7 +30,8 @@ module Make (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
       Mirage_runtime.at_exit (fun () ->
         S.TCP.unlisten (S.tcp stack) ~port |> Lwt.return
       );
-      S.TCP.listen (S.tcp stack) ~port callback
+      S.TCP.listen (S.tcp stack) ~port callback;
+      O.registered_listener ~port
 
     let udp stack port =
       let callback ~src:_ ~dst ~src_port:_ data =

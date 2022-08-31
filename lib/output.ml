@@ -8,6 +8,7 @@ module type S = sig
       val closing_connection : ip:Ipaddr.t -> port:int -> unit
       val error : ip:Ipaddr.t -> port:int -> err:string -> unit
       val data : ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
+      val registered_listener : port:int -> unit
     end
 
   end
@@ -49,6 +50,9 @@ module Log_stdout : S = struct
           f "read: %d bytes:\n%s"
             (Cstruct.length data)
             (Cstruct.to_string data))
+
+      let registered_listener ~port =
+        Log.info (fun f -> f "registered tcp listener on port %d" port)
 
     end
 
