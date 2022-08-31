@@ -34,31 +34,34 @@ module Make (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
       O.registered_listener ~port
 
     let udp stack port =
+      let module O = O.Listen.Udp in
       let callback ~src:_ ~dst ~src_port:_ data =
-        Logs.info (fun m ->
-          m "new udp connection from IP '%s' on port '%d'"
-            (Ipaddr.to_string dst) port);
-        Logs.info (fun f ->
-          f "read: %d bytes:\n%s" (Cstruct.length data) (Cstruct.to_string data));
+        O.data ~ip:dst ~port ~data;
         Lwt.return_unit
       in
       Mirage_runtime.at_exit (fun () ->
         S.UDP.unlisten (S.udp stack) ~port |> Lwt.return
       );
-      S.UDP.listen (S.udp stack) ~port callback
+      S.UDP.listen (S.udp stack) ~port callback;
+      O.registered_listener ~port
 
   end
 
   module Connect = struct
 
     let tcp ~stack ~name ~port ~ip ~monitor_bandwidth =
+      let module O = O.Connect.Tcp in
       begin
         let open Lwt_result.Infix in
+        O.connecting ~ip ~port;
         S.TCP.create_connection (S.tcp stack) (ip, port)
         |> Lwt_result.map_error (fun err -> `Connection err)
         >>= fun flow ->
+        O.connected ~ip ~port;
         Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
-        let data = Cstruct.of_string @@ "I'm "^name in
+        let data_str = "I'm "^name in
+        let data = Cstruct.of_string data_str in
+        O.writing ~ip ~port ~data:data_str;
         S.TCP.write flow data
         |> Lwt_result.map_error (fun err -> `Write err)
       end
@@ -75,7 +78,10 @@ module Make (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
         * so this conntest can check what (roundtrip) latency was of that packet-index
     *)
     let udp ~stack ~name ~port ~ip ~monitor_bandwidth =
-      let data = Cstruct.of_string @@ "I'm "^name in
+      let module O = O.Connect.Udp in
+      let data_str = "I'm "^name in
+      let data = Cstruct.of_string data_str in
+      O.writing ~ip ~port ~data:data_str;
       S.UDP.write ~dst:ip ~dst_port:port (S.udp stack) data
       |> Lwt_result.map_error (fun err -> `Udp err)
 

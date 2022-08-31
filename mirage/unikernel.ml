@@ -18,7 +18,8 @@ module Main
     (S : Tcpip.Stack.V4V6)
 = struct
 
-  module Ct = Conntest.Make(S)(Conntest.Output.Log_stdout)
+  module Output = Conntest.Output.Log_stdout
+  module Ct = Conntest.Make(S)(Output)
   
   let try_register_listener ~stack input =
     begin match input with
@@ -112,6 +113,7 @@ module Main
     | Error (`Msg msg) ->
       Logs.err (fun m -> m "Error: try_initiate_connection: %s" msg);
       exit 1
+    (*> goto these should be handled inside Ct as it should loop and try connection*)
     | Error (`Udp udp_err) ->
       Logs.err (fun m ->
         m "Error: try_initiate_connection: %a"
@@ -156,9 +158,9 @@ module Main
         Logs.err (fun m -> m "ERROR: test_notty")
     )
 
-  let start console _notty _time stack =
-    let term_size = 70, 11 in
-    Lwt.async @@ test_notty ~console ~init_size:term_size;
+  let start _console _notty _time stack =
+    let _term_size = 70, 11 in
+    (* Lwt.async @@ test_notty ~console ~init_size:term_size; *)
     let name = Key_gen.name () in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
