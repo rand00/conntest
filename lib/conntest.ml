@@ -5,6 +5,8 @@ module Output = Output
 let (let*) = Result.bind 
 let (let+) x f = Result.map f x 
 
+(*goto make a module T here containing shared types for comms with serializers*)
+
 module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
 
   module Listen = struct
@@ -49,6 +51,13 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
 
   module Connect = struct
 
+    let sec n = Int64.of_float (1e9 *. n)
+    
+    (*goto loop sending packets, to:
+      * check if connection is up
+      * check latency
+      * optionally monitor bandwidth
+    *)
     let tcp ~stack ~name ~port ~ip ~monitor_bandwidth =
       let module O = O.Connect.Tcp in
       let rec loop_try_connect () = 
@@ -58,20 +67,32 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         | Error err ->
           let err = Fmt.str "%a" S.TCP.pp_error err in
           O.error_connection ~ip ~port ~err;
-          Time.sleep_ns @@ Int64.of_float 1e9 >>= fun () ->
+          Time.sleep_ns @@ sec 1. >>= fun () ->
           loop_try_connect ()
         | Ok flow ->
           O.connected ~ip ~port;
           Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
-          let data_str = "I'm "^name in
-          let data = Cstruct.of_string data_str in
-          O.writing ~ip ~port ~data:data_str;
-          S.TCP.write flow data
-          (*goto loop sending packets, to:
-            * check if connection is up
-            * check latency
-            * optionally monitor bandwidth
-          *)
+          loop_write flow
+      and loop_write flow =
+        let data_str = "I'm "^name in
+        let data = Cstruct.of_string data_str in
+        O.writing ~ip ~port ~data:data_str;
+        S.TCP.write flow data >>= function
+        | Ok () ->
+          O.wrote_data ~ip ~port;
+          (*goto receive response *)
+          Time.sleep_ns @@ sec 0.2 >>= fun () ->
+          loop_write flow
+        | Error (`Closed | `Refused | `Timeout as err) ->
+          let err = Fmt.str "%a" S.TCP.pp_write_error err in
+          O.error_writing ~ip ~port ~err;
+          O.closing_flow ~ip ~port;
+          S.TCP.close flow >>= fun () ->
+          O.closed_flow ~ip ~port;
+          Time.sleep_ns @@ sec 1. >>= fun () ->
+          loop_try_connect ()
+        | Error _ -> failwith "todo"
+        (*< goto what to do in this case? (private polyvar problem)*)
       in
       loop_try_connect ()
 
