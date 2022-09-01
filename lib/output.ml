@@ -1,6 +1,12 @@
 
+(*goto rename this module to Ui ? - Output can mean many things.. *)
+
 module type S = sig
 
+  (*> goto all errors should be explicit, so user can get all the info wanted
+    .. and notty interface needs error values instead of just a string 
+  *)
+  
   module Listen : sig
 
     module Tcp : sig
@@ -26,7 +32,11 @@ module type S = sig
       val connected : ip:Ipaddr.t -> port:int -> unit
       val writing : ip:Ipaddr.t -> port:int -> data:string -> unit
       val error_connection : ip:Ipaddr.t -> port:int -> err:string -> unit
-      
+      val error_writing : ip:Ipaddr.t -> port:int -> err:string -> unit
+      val wrote_data : ip:Ipaddr.t -> port:int -> unit
+      val closing_flow : ip:Ipaddr.t -> port:int -> unit
+      val closed_flow : ip:Ipaddr.t -> port:int -> unit
+          
     end
 
     module Udp : sig
@@ -113,9 +123,27 @@ module Log_stdout : S = struct
 
       let error_connection ~ip ~port ~err =
         Log.warn (fun f ->
-          f "error connecting to %s:%d:\n%s"
+          f "error connecting via tcp to %s:%d:\n%s"
             (Ipaddr.to_string ip) port
             err)
+
+      let error_writing ~ip ~port ~err =
+        Log.warn (fun f ->
+          f "error writing via tcp to %s:%d:\n%s"
+            (Ipaddr.to_string ip) port
+            err)
+        
+      let wrote_data ~ip ~port = 
+        Log.info (fun m ->
+          m "wrote via tcp to %s:%d" (Ipaddr.to_string ip) port)
+        
+      let closing_flow ~ip ~port =
+        Log.info (fun m ->
+          m "closing tcp flow to %s:%d" (Ipaddr.to_string ip) port)
+        
+      let closed_flow ~ip ~port =
+        Log.info (fun m ->
+          m "closed tcp flow to %s:%d" (Ipaddr.to_string ip) port)
 
     end
 
