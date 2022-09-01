@@ -32,7 +32,9 @@ module type S = sig
       val connected : ip:Ipaddr.t -> port:int -> unit
       val writing : ip:Ipaddr.t -> port:int -> data:string -> unit
       val error_connection : ip:Ipaddr.t -> port:int -> err:string -> unit
-      val error_writing : ip:Ipaddr.t -> port:int -> err:string -> unit
+      val error_writing : ip:Ipaddr.t -> port:int -> err:Tcpip.Tcp.write_error
+        -> unit
+      val error_writing_str : ip:Ipaddr.t -> port:int -> err:string -> unit
       val wrote_data : ip:Ipaddr.t -> port:int -> unit
       val closing_flow : ip:Ipaddr.t -> port:int -> unit
       val closed_flow : ip:Ipaddr.t -> port:int -> unit
@@ -128,6 +130,13 @@ module Log_stdout : S = struct
             err)
 
       let error_writing ~ip ~port ~err =
+        let err = Fmt.str "%a" Tcpip.Tcp.pp_write_error err in
+        Log.warn (fun f ->
+          f "error writing via tcp to %s:%d:\n%s"
+            (Ipaddr.to_string ip) port
+            err)
+
+      let error_writing_str ~ip ~port ~err =
         Log.warn (fun f ->
           f "error writing via tcp to %s:%d:\n%s"
             (Ipaddr.to_string ip) port

@@ -11,6 +11,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
 
   module Listen = struct
 
+    (*goto loop read*)
     let tcp stack port =
       let module O = O.Listen.Tcp in
       let callback flow =
@@ -83,16 +84,21 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           (*goto receive response *)
           Time.sleep_ns @@ sec 0.2 >>= fun () ->
           loop_write flow
-        | Error (`Closed | `Refused | `Timeout as err) ->
-          let err = Fmt.str "%a" S.TCP.pp_write_error err in
+        | Error (#Tcpip.Tcp.write_error as err) ->
           O.error_writing ~ip ~port ~err;
           O.closing_flow ~ip ~port;
           S.TCP.close flow >>= fun () ->
           O.closed_flow ~ip ~port;
           Time.sleep_ns @@ sec 1. >>= fun () ->
           loop_try_connect ()
-        | Error _ -> failwith "todo"
-        (*< goto what to do in this case? (private polyvar problem)*)
+        | Error private_err -> 
+          let err = Fmt.str "%a" S.TCP.pp_write_error private_err in
+          O.error_writing_str ~ip ~port ~err;
+          O.closing_flow ~ip ~port;
+          S.TCP.close flow >>= fun () ->
+          O.closed_flow ~ip ~port;
+          Time.sleep_ns @@ sec 1. >>= fun () ->
+          loop_try_connect ()
       in
       loop_try_connect ()
 
