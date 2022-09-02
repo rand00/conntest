@@ -11,12 +11,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
 
   module Listen = struct
 
-    (*goto loop read*)
     let tcp stack port =
       let module O = O.Listen.Tcp in
-      let callback flow =
-        let dst, dst_port = S.TCP.dst flow in
-        O.new_connection ~ip:dst ~port:dst_port;
+      let rec loop_read ~flow ~dst ~dst_port =
         S.TCP.read flow >>= function
         | Ok `Eof ->
           O.closing_connection ~ip:dst ~port:dst_port;
@@ -24,9 +21,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         | Error e ->
           let err = Fmt.str "%a" S.TCP.pp_error e in
           O.error ~ip:dst ~port:dst_port ~err;
-          (*goto possibly add O.closing_connection *)
+          O.closing_connection ~ip:dst ~port:dst_port;
           S.TCP.close flow
-        (*< goto try loop on timeout? - else can just wait on new req*)
+        (*< gomaybe try loop on timeout? - else can just wait on new req*)
         | Ok (`Data data) ->
           (*goto depending on data -
             * latency-test: send packet back right away
@@ -37,7 +34,12 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
                     * < latency can be subtracted
           *)
           O.data ~ip:dst ~port:dst_port ~data;
-          S.TCP.close flow
+          loop_read ~flow ~dst ~dst_port
+      in
+      let callback flow =
+        let dst, dst_port = S.TCP.dst flow in
+        O.new_connection ~ip:dst ~port:dst_port;
+        loop_read ~flow ~dst ~dst_port
       in
       Mirage_runtime.at_exit (fun () ->
         S.TCP.unlisten (S.tcp stack) ~port |> Lwt.return
