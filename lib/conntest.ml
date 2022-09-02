@@ -20,13 +20,22 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         S.TCP.read flow >>= function
         | Ok `Eof ->
           O.closing_connection ~ip:dst ~port:dst_port;
-          Lwt.return_unit
+          S.TCP.close flow
         | Error e ->
           let err = Fmt.str "%a" S.TCP.pp_error e in
           O.error ~ip:dst ~port:dst_port ~err;
           (*goto possibly add O.closing_connection *)
-          Lwt.return_unit
+          S.TCP.close flow
+        (*< goto try loop on timeout? - else can just wait on new req*)
         | Ok (`Data data) ->
+          (*goto depending on data -
+            * latency-test: send packet back right away
+            * bandwidth-test:
+              * @brian howto;
+                * just read as fast as possible
+                  * and then send small pkt back when done?
+                    * < latency can be subtracted
+          *)
           O.data ~ip:dst ~port:dst_port ~data;
           S.TCP.close flow
       in
