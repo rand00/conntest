@@ -5,7 +5,6 @@ module Output = Output
 let (let*) = Result.bind 
 let (let+) x f = Result.map f x 
 
-(*goto make a module T here containing shared types for comms with serializers*)
 
 module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
 
@@ -13,7 +12,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
 
     let tcp stack port =
       let module O = O.Listen.Tcp in
-      let rec loop_read ~flow ~dst ~dst_port =
+      let rec loop_read ~flow ~dst ~dst_port packet =
         S.TCP.read flow >>= function
         | Ok `Eof ->
           O.closing_connection ~ip:dst ~port:dst_port;
@@ -25,21 +24,33 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           S.TCP.close flow
         (*< gomaybe try loop on timeout? - else can just wait on new req*)
         | Ok (`Data data) ->
-          (*goto depending on data -
-            * latency-test: send packet back right away
-            * bandwidth-test:
-              * @brian howto;
-                * just read as fast as possible
-                  * and then send small pkt back when done?
-                    * < latency can be subtracted
-          *)
-          O.data ~ip:dst ~port:dst_port ~data;
-          loop_read ~flow ~dst ~dst_port
+          begin match packet with
+            | None ->
+              (*> goto handle errors after this block? *)
+              let pkt_len, data = Packet.Raw.parse_length data in
+              begin match Packet.Tcp.init ~length ~data with
+                | `Done packet_str ->
+                  let packet = Packet.Client.parse packet_str in
+                  O.packet ~ip:dst ~port:dst_port packet;
+                  loop_read ~flow ~dst ~dst_port None
+                | `Unfinished packet ->
+                  loop_read ~flow ~dst ~dst_port @@ Some packet
+              end
+            | Some packet_buffer ->
+              begin match packet_buffer |> Packet.Tcp.append ~data with
+                | `Done packet_str -> 
+                  let packet = Packet.Client.parse packet_str in
+                  O.packet ~ip:dst ~port:dst_port packet;
+                  loop_read ~flow ~dst ~dst_port None
+                | `Unfinished packet_buffer ->
+                  loop_read ~flow ~dst ~dst_port @@ Some packet_buffer
+              end
+          end
       in
       let callback flow =
         let dst, dst_port = S.TCP.dst flow in
         O.new_connection ~ip:dst ~port:dst_port;
-        loop_read ~flow ~dst ~dst_port
+        loop_read ~flow ~dst ~dst_port None
       in
       Mirage_runtime.at_exit (fun () ->
         S.TCP.unlisten (S.tcp stack) ~port |> Lwt.return

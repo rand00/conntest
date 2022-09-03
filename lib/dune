@@ -1,7 +1,7 @@
 (library
  (name conntest)
  (public_name conntest)
- (modules conntest output)
+;; (modules conntest output packet)
  (flags :standard -w -6-27-32-33-39)
  (libraries
   mirage-time
@@ -12,6 +12,14 @@
   ipaddr
   uri
   notty
+  uuidm
+  yojson
+  cstruct
+  )
+ (preprocess
+  (pps
+   ppx_deriving_yojson
+   )
   )
  )
 
