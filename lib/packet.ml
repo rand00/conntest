@@ -45,13 +45,23 @@ module Raw = struct
 
 end
 
-module T = struct 
+module Header = struct
 
-  type header = {
+  type t = {
     index : int;
     connection_id : string;
   }
-  [@@deriving yojson]
+  (* [@@deriving yojson] *)
+
+  (* let parse_header str = str |> Yojson.Safe.from_string |> header_of_yojson *)
+  let of_string str = failwith "todo"
+  let to_string h = failwith "todo"
+
+end
+
+module T = struct 
+
+  type header = Header.t
 
   type t = {
     header : header;
@@ -60,8 +70,6 @@ module T = struct
 
 end
 include T
-
-let parse_header str = str |> Yojson.Safe.from_string |> header_of_yojson
 
 type unfinished = {
   header_len : int;
@@ -79,7 +87,7 @@ module Tcp = struct
       if Buffer.length unfinished.buffer >= unfinished.header_len then
         let+ header =
           Buffer.sub unfinished.buffer 0 unfinished.header_len
-          |> parse_header
+          |> Header.of_string
           |> Result.map_error (fun s -> `Msg s)
         in
         { unfinished with header = Some header }

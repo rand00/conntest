@@ -84,7 +84,7 @@ module Log_stdout : S = struct
         Log.info (fun f ->
           f "got packet from %s:%d:\n---- header:\n%s\n---- data:\n%s"
             (Ipaddr.to_string ip) port
-            (packet.header |> Packet.header_to_yojson |> Yojson.Safe.to_string)
+            (packet.header |> Packet.Header.to_string)
             (packet.data)
         )
 
