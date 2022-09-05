@@ -108,6 +108,10 @@ module Tcp = struct
         Ok unfinished
     in
     let full_len = unfinished.header_len + unfinished.data_len in
+    (*> goto - tcp allows for 'data' to contain some of the next packet too
+      * .. so should check for >= full_len
+        * and return `Done (packet, buffer-tail)
+    *)
     if Buffer.length unfinished.buffer = full_len then
       let header = Option.get unfinished.header in
       let data =

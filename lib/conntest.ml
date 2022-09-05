@@ -30,7 +30,11 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           in
           begin match unfinished with
             | `Done packet ->
+              (*< goto there can be more data left that should be read as a new packet
+                .. see https://serverfault.com/questions/534063/can-tcp-and-udp-packets-be-split-into-pieces
+              *)
               O.packet ~ip:dst ~port:dst_port packet;
+              (*goto goo send packet back (with empty data)*)
               loop_read ~flow ~dst ~dst_port None
             | `Unfinished packet ->
               loop_read ~flow ~dst ~dst_port @@ Some packet
@@ -126,7 +130,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         S.TCP.write flow packet >>= function
         | Ok () ->
           O.wrote_data ~ip ~port;
-          begin
+          begin (*goo we are stuck here - does server send packet back?*)
             loop_read_returning flow >>= function
             | Ok _response -> (*goto use response for stats*)
               (*> goto shouldn't wait when bandwidth-monitoring*)
