@@ -142,7 +142,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           let open Packet.T in
           let header = { index; connection_id } in
           let packet = { header; data = "" } in (*< goto change format?*)
-          Packet.to_string packet
+          Packet.to_string ~override_data_len:(Cstruct.length data) packet
         in
         let packet = Cstruct.of_string packet_str in
         O.writing ~ip ~port ~data:data_str;
