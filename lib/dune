@@ -15,6 +15,7 @@
   uuidm
   yojson
   cstruct
+  stringext
   ;; decoders-jsonm
   ;; decoders-msgpck
   )

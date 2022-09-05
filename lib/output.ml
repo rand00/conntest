@@ -85,7 +85,8 @@ module Log_stdout : S = struct
           f "got packet from %s:%d:\n---- header:\n%s\n---- data:\n%s"
             (Ipaddr.to_string ip) port
             (packet.header |> Packet.Header.to_string)
-            (packet.data)
+            (Stringext.take packet.data 50 ^ "...")
+            (*< goto depend explicitly on this or do something else*)
         )
 
     end
