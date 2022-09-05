@@ -77,7 +77,8 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
     *)
     let tcp ~stack ~name ~port ~ip ~monitor_bandwidth =
       let module O = O.Connect.Tcp in
-      let rec loop_try_connect () = 
+      let rec loop_try_connect () =
+        let connection_id = Uuidm.(v `V4 |> to_string) in
         O.connecting ~ip ~port;
         S.TCP.create_connection (S.tcp stack) (ip, port)
         >>= function
@@ -89,17 +90,69 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         | Ok flow ->
           O.connected ~ip ~port;
           Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
-          loop_write flow
-      and loop_write flow =
-        let data_str = "I'm "^name in
-        let data = Cstruct.of_string data_str in
-        O.writing ~ip ~port ~data:data_str;
-        S.TCP.write flow data >>= function
+          loop_write ~index:0 ~connection_id flow
+      and loop_read_returning ?unfinished_packet flow =
+        (*> goto add this*)
+        (* O.reading_response ~ip ~port; *)
+        S.TCP.read flow >>= function
+        | Ok (`Data data) ->
+          let open Lwt_result.Syntax in
+          let* unfinished = match unfinished_packet with
+            | None -> Packet.Tcp.init data |> Lwt.return
+            | Some unfinished ->
+              Packet.Tcp.append ~data unfinished |> Lwt.return
+          in
+          begin match unfinished with
+            | `Done packet ->
+              (*> goto add this ? - maybe call in loop_write on response?*)
+              (* O.packet ~ip:dst ~port:dst_port packet; *)
+              Lwt_result.return packet
+            | `Unfinished packet ->
+              loop_read_returning ~unfinished_packet:packet flow
+          end
+        | Ok `Eof -> Lwt_result.fail `Eof
+        | Error read_err -> Lwt_result.fail @@ `Read read_err
+      and loop_write ~index ~connection_id flow =
+        (*> goto for bandwidth monitoring, create packets of CLI specified size*)
+        let data = "I'm "^name in
+        let packet_str =
+          let open Packet.T in
+          let header = { index; connection_id } in
+          let packet = { header; data } in
+          Packet.to_string packet
+        in
+        let packet = Cstruct.of_string packet_str in
+        O.writing ~ip ~port ~data;
+        S.TCP.write flow packet >>= function
         | Ok () ->
           O.wrote_data ~ip ~port;
-          (*goto receive response *)
-          Time.sleep_ns @@ sec 0.2 >>= fun () ->
-          loop_write flow
+          begin
+            loop_read_returning flow >>= function
+            | Ok _response -> (*goto use response for stats*)
+              (*> goto shouldn't wait when bandwidth-monitoring*)
+              Time.sleep_ns @@ sec 0.2 >>= fun () ->
+              loop_write ~index:(succ index) ~connection_id flow
+            | Error `Eof ->
+              (* goto let O.error handle any kind of error instead ..*)
+              (*> goto add this (name differently?)*)
+              (* O.error_eof ~ip ~port; *)
+              (*> goto reuse this 'failure case' boilerplate*)
+              O.closing_flow ~ip ~port;
+              S.TCP.close flow >>= fun () ->
+              O.closed_flow ~ip ~port;
+              (*> goto reuse wait-time-on-error definition*)
+              Time.sleep_ns @@ sec 1. >>= fun () ->
+              loop_try_connect ()
+            | Error _ ->
+              (*> goto add this *)
+              (* O.error_reading ~ip ~port ~err; *)
+              O.closing_flow ~ip ~port;
+              S.TCP.close flow >>= fun () ->
+              O.closed_flow ~ip ~port;
+              (*> goto reuse wait-time-on-error definition*)
+              Time.sleep_ns @@ sec 1. >>= fun () ->
+              loop_try_connect ()
+          end
         | Error (#Tcpip.Tcp.write_error as err) ->
           O.error_writing ~ip ~port ~err;
           O.closing_flow ~ip ~port;

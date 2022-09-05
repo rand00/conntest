@@ -60,7 +60,10 @@ end
 
 module T = struct 
 
-  type header = Header.t
+  type header = Header.t = {
+    index : int;
+    connection_id : string;
+  }
 
   type t = {
     header : header;
@@ -69,6 +72,17 @@ module T = struct
 
 end
 include T
+
+let to_string packet =
+  let header_str = Header.to_string packet.header in
+  let header_len = String.length header_str in
+  let data_len = String.length packet.data in
+  let packet_str = header_str ^ packet.data in
+  String.concat "\n" [
+    Int.to_string header_len;
+    Int.to_string data_len;
+    packet_str;
+  ]
 
 type unfinished = {
   header_len : int;
