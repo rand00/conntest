@@ -133,7 +133,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
       and loop_write ~index ~connection_id flow =
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
         (* let data = "I'm "^name in *)
-        let data = String.make 1_000_000 '%' in
+        let data = String.make 5_000_000 '%' in
         let packet_str =
           let open Packet.T in
           let header = { index; connection_id } in
