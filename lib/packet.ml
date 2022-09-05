@@ -73,10 +73,13 @@ module T = struct
 end
 include T
 
-let to_string packet =
+let to_string ?override_data_len packet =
   let header_str = Header.to_string packet.header in
   let header_len = String.length header_str in
-  let data_len = String.length packet.data in
+  let data_len = match override_data_len with
+    | None -> String.length packet.data
+    | Some len -> len
+  in
   let packet_str = header_str ^ packet.data in
   String.concat "\n" [
     Int.to_string header_len;
