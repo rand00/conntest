@@ -13,8 +13,8 @@ module type S = sig
       val new_connection : ip:Ipaddr.t -> port:int -> unit
       val closing_connection : ip:Ipaddr.t -> port:int -> unit
       val error : ip:Ipaddr.t -> port:int -> err:string -> unit
-      val data : ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
       val registered_listener : port:int -> unit
+      val packet : ip:Ipaddr.t -> port:int -> Packet.t -> unit
     end
 
     module Udp : sig
@@ -76,15 +76,17 @@ module Log_stdout : S = struct
             (Ipaddr.to_string ip) port
             err)
 
-      let data ~ip ~port ~data =
-        Log.info (fun f ->
-          f "read %d bytes from %s:%d:\n%s"
-            (Cstruct.length data)
-            (Ipaddr.to_string ip) port
-            (Cstruct.to_string data))
-
       let registered_listener ~port =
         Log.info (fun f -> f "registered tcp listener on port %d" port)
+
+      let packet ~ip ~port packet =
+        let open Packet.T in
+        Log.info (fun f ->
+          f "got packet from %s:%d:\n---- header:\n%s\n---- data:\n%s"
+            (Ipaddr.to_string ip) port
+            (packet.header |> Packet.header_to_yojson |> Yojson.Safe.to_string)
+            (packet.data)
+        )
 
     end
 
