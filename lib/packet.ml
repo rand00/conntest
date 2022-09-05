@@ -27,7 +27,7 @@ module Raw = struct
       |> result_of_opt "Packet.Raw.parse_length: No newline found"
     in
     let* length_str =
-      try Ok Cstruct.(sub data 0 (pred newline_idx) |> to_string) with _ -> 
+      try Ok Cstruct.(sub data 0 newline_idx |> to_string) with _ -> 
         Error (`Msg "Packet.Raw.parse_length: Couldn't extract length")
     in
     let* length =
