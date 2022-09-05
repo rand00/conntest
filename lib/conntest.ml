@@ -23,7 +23,6 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           Lwt_result.fail (`Msg msg)
         (*< gomaybe try loop on timeout? - else can just wait on new req*)
         | Ok (`Data data) ->
-          Logs.info (fun m -> m "DEBUG: DATA:\n%s" (Cstruct.to_string data));
           let* unfinished = match unfinished_packet with
             | None -> Packet.Tcp.init data |> Lwt.return
             | Some unfinished ->
