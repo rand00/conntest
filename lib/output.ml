@@ -55,6 +55,11 @@ module Log_stdout : S = struct
 
   let src = Logs.Src.create "conntest" ~doc:"conntest events"
   module Log = (val Logs.src_log src : Logs.LOG)
+
+  let preview_big_string str =
+    if String.length str > 50 then 
+      Stringext.take str 50 ^ "..."
+    else str
   
   module Listen = struct
 
@@ -85,7 +90,7 @@ module Log_stdout : S = struct
           f "got packet from %s:%d:\n---- header:\n%s\n---- data:\n%s"
             (Ipaddr.to_string ip) port
             (packet.header |> Packet.Header.to_string)
-            (Stringext.take packet.data 50 ^ "...")
+            (packet.data |> preview_big_string)
             (*< goto depend explicitly on this or do something else*)
         )
 
@@ -124,7 +129,9 @@ module Log_stdout : S = struct
       let writing ~ip ~port ~data =
         Log.info (fun m ->
           m "writing via tcp to %s:%d: %s"
-            (Ipaddr.to_string ip) port data)
+            (Ipaddr.to_string ip) port
+            (data |> preview_big_string)
+        ) 
 
       let error_connection ~ip ~port ~err =
         Log.warn (fun f ->
