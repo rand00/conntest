@@ -51,11 +51,10 @@ module Header = struct
     index : int;
     connection_id : string;
   }
-  (* [@@deriving yojson] *)
+  [@@deriving yojson]
 
-  (* let parse_header str = str |> Yojson.Safe.from_string |> header_of_yojson *)
-  let of_string str = failwith "todo"
-  let to_string h = failwith "todo"
+  let of_string str = str |> Yojson.Safe.from_string |> of_yojson
+  let to_string h = h |> to_yojson |> Yojson.Safe.to_string
 
 end
 

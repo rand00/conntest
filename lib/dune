@@ -13,15 +13,15 @@
   uri
   notty
   uuidm
-  ;; yojson
+  yojson
   cstruct
-  decoders-jsonm
+  ;; decoders-jsonm
   ;; decoders-msgpck
   )
- ;; (preprocess
- ;;  (pps
- ;;   ppx_deriving_yojson
- ;;   )
- ;;  )
+ (preprocess
+  (pps
+   ppx_deriving_yojson
+   )
+  )
  )
 

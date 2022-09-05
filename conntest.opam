@@ -20,6 +20,8 @@ depends: [
   "uri"
   "tcpip"
   "notty"
+  "yojson"
+  "ppx_deriving_yojson"
 ]
 
 pin-depends: [
