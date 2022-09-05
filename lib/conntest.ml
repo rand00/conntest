@@ -87,6 +87,10 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
   module Connect = struct
 
     let sec n = Int64.of_float (1e9 *. n)
+
+    (*> goto remove? - or do this for bandwidth-testing*)
+    let data_str = String.make 5_000_000 '%'
+    let data = Cstruct.of_string data_str
     
     (*goto loop sending packets, to:
       * check if connection is up
@@ -133,16 +137,16 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
       and loop_write ~index ~connection_id flow =
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
         (* let data = "I'm "^name in *)
-        let data = String.make 5_000_000 '%' in
+        (*> goto currently this is only header - change name if keeping like this*)
         let packet_str =
           let open Packet.T in
           let header = { index; connection_id } in
-          let packet = { header; data } in
+          let packet = { header; data = "" } in (*< goto change format?*)
           Packet.to_string packet
         in
         let packet = Cstruct.of_string packet_str in
-        O.writing ~ip ~port ~data;
-        S.TCP.write flow packet >>= function
+        O.writing ~ip ~port ~data:data_str;
+        S.TCP.writev flow [ packet; data ] >>= function
         | Ok () ->
           O.wrote_data ~ip ~port;
           begin (*goo we are stuck here - does server send packet back?*)
