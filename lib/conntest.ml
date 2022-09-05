@@ -35,7 +35,21 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
               *)
               O.packet ~ip:dst ~port:dst_port packet;
               (*goto goo send packet back (with empty data)*)
-              loop_read ~flow ~dst ~dst_port None
+              let response_packet =
+                Packet.T.{ packet with data = "" }
+                |> Packet.to_string
+                |> Cstruct.of_string
+              in
+              begin
+                S.TCP.write flow response_packet >>= function
+                | Ok () ->
+                  (*> goto add this (naming?)*)
+                  (* O.responded_to_packet ~ip ~port; *)
+                  loop_read ~flow ~dst ~dst_port None
+                | Error err ->
+                  let msg = Fmt.str "%a" S.TCP.pp_write_error err in
+                  Lwt_result.fail @@ `Msg msg
+              end
             | `Unfinished packet ->
               loop_read ~flow ~dst ~dst_port @@ Some packet
           end
