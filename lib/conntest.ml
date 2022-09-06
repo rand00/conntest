@@ -168,16 +168,13 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
               Time.sleep_ns @@ sec 1. >>= fun () ->
               loop_try_connect ()
           end
-        | Error (#Tcpip.Tcp.write_error as err) ->
-          O.error_writing ~ip ~port ~err;
-          O.closing_flow ~ip ~port;
-          S.TCP.close flow >>= fun () ->
-          O.closed_flow ~ip ~port;
-          Time.sleep_ns @@ sec 1. >>= fun () ->
-          loop_try_connect ()
-        | Error private_err -> 
-          let err = Fmt.str "%a" S.TCP.pp_write_error private_err in
-          O.error_writing_str ~ip ~port ~err;
+        | Error private_err ->
+          let err = match private_err with
+            | (#Tcpip.Tcp.write_error as err) -> Some err
+            | _ -> None
+          in
+          let msg = Fmt.str "%a" S.TCP.pp_write_error private_err in
+          O.error_writing ~ip ~port ~err ~msg;
           O.closing_flow ~ip ~port;
           S.TCP.close flow >>= fun () ->
           O.closed_flow ~ip ~port;

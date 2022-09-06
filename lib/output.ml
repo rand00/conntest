@@ -32,9 +32,9 @@ module type S = sig
       val connected : ip:Ipaddr.t -> port:int -> unit
       val writing : ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
       val error_connection : ip:Ipaddr.t -> port:int -> err:string -> unit
-      val error_writing : ip:Ipaddr.t -> port:int -> err:Tcpip.Tcp.write_error
+      val error_writing : ip:Ipaddr.t -> port:int
+        -> err:(Tcpip.Tcp.write_error option) -> msg:string
         -> unit
-      val error_writing_str : ip:Ipaddr.t -> port:int -> err:string -> unit
       val wrote_data : ip:Ipaddr.t -> port:int -> unit
       val closing_flow : ip:Ipaddr.t -> port:int -> unit
       val closed_flow : ip:Ipaddr.t -> port:int -> unit
@@ -139,18 +139,16 @@ module Log_stdout : S = struct
             (Ipaddr.to_string ip) port
             err)
 
-      let error_writing ~ip ~port ~err =
-        let err = Fmt.str "%a" Tcpip.Tcp.pp_write_error err in
+      let error_writing ~ip ~port ~err:_ ~msg =
         Log.warn (fun f ->
-          f "error writing via tcp to %s:%d:\n%s"
-            (Ipaddr.to_string ip) port
-            err)
+          f "error writing via tcp to %s:%d:\n%s" (Ipaddr.to_string ip) port msg
+        )
 
-      let error_writing_str ~ip ~port ~err =
-        Log.warn (fun f ->
-          f "error writing via tcp to %s:%d:\n%s"
-            (Ipaddr.to_string ip) port
-            err)
+      (* let error_writing_str ~ip ~port ~err =
+       *   Log.warn (fun f ->
+       *     f "error writing via tcp to %s:%d:\n%s"
+       *       (Ipaddr.to_string ip) port
+       *       err) *)
         
       let wrote_data ~ip ~port = 
         Log.info (fun m ->
