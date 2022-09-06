@@ -61,6 +61,19 @@ module Main
       Logs.err (fun m -> m "Error: try_register_listener: %s" msg);
       exit 1
 
+  (*goto implement*)
+  let parse_file_size str = failwith "todo"
+
+  let find_option ~options tag ~default ~parse_vs =
+    options |> List.fold_left (fun acc option ->
+      let* _acc = acc in
+      match option with 
+      | tag', vs when String.equal tag tag' -> parse_vs vs
+      | option_name, _ ->
+        let msg = Fmt.str "Unknown option: '%s'" option_name in
+        Error (`Msg msg)
+    ) (Ok default)
+
   let try_initiate_connection ~stack ~name uri_str =
     begin
       let uri = Uri.of_string uri_str in
@@ -93,16 +106,22 @@ module Main
           Fmt.str "Port was not defined in URI '%s'" uri_str
         )
       in
-      let options = Uri.query uri in
-      let+ monitor_bandwidth =
-        options |> List.fold_left (fun acc option ->
-          let* _acc = acc in
-          match option with 
-          | "monitor-bandwidth", [] -> Ok true
-          | option_name, _ ->
-            let msg = Fmt.str "Unknown option: '%s'" option_name in
-            Error (`Msg msg)
-        ) (Ok false)
+      let options = Uri.query uri
+      in
+      let* monitor_bandwidth =
+        let parse_vs = function
+          | [] -> Ok true
+          | _ -> Error (`Msg "'monitor-bandwidth' is a flag")
+        in
+        find_option ~options "monitor-bandwidth" ~default:false ~parse_vs
+      in
+      (*goto pass to Conntest*)
+      let+ monitor_bandwidth_size =
+        let parse_vs = function
+          | [ str ] -> parse_file_size str
+          | _ -> Error (`Msg "'packet-size' takes an argument like '2Mb'")
+        in
+        find_option ~options "packet-size" ~default:5_000_000 ~parse_vs
       in
       match protocol with
       | `Tcp -> Ct.Connect.tcp ~stack ~name ~port ~ip ~monitor_bandwidth
