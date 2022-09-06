@@ -4,7 +4,7 @@
 type connect_tcp_read_error = [
   | `Eof
   | `Msg of string
-  | `Tcp of (Tcpip.Tcp.error option * string (*message*))
+  | `Read of (Tcpip.Tcp.error option * string (*message*))
   (*< Note: the option is because of private variants*)
 ]
 
@@ -151,10 +151,23 @@ module Log_stdout : S = struct
 
       let error_writing ~ip ~port ~err:_ ~msg =
         Log.warn (fun f ->
-          f "error writing via tcp to %s:%d:\n%s" (Ipaddr.to_string ip) port msg
+          f "error writing via tcp to %s:%d:\n%s"
+            (Ipaddr.to_string ip) port msg
         )
 
-      let error_reading ~ip ~port ~err:_ = failwith "todo"
+      let error_reading ~ip ~port ~err =
+        match err with
+        | `Msg msg 
+        | `Read (_, msg) -> 
+          Log.warn (fun f ->
+            f "error reading via tcp from %s:%d:\n%s"
+              (Ipaddr.to_string ip) port msg
+          )
+        | `Eof ->
+          Log.warn (fun f ->
+            f "error reading via tcp from %s:%d:\n%s"
+              (Ipaddr.to_string ip) port "End of file"
+          )
         
       let wrote_data ~ip ~port = 
         Log.info (fun m ->

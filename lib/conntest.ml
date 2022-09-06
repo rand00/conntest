@@ -138,7 +138,13 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
               loop_read_returning ~unfinished_packet:packet flow
           end
         | Ok `Eof -> Lwt_result.fail `Eof
-        | Error read_err -> Lwt_result.fail @@ `Read read_err
+        | Error private_err -> 
+          let msg = Fmt.str "%a" S.TCP.pp_error private_err in
+          let err = match private_err with
+            | (#Tcpip.Tcp.error as err) -> Some err
+            | _ -> None
+          in
+          Lwt_result.fail @@ `Read (err, msg)
       and loop_write ~index ~connection_id flow =
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
         let sleep_secs = if monitor_bandwidth then 0.0 else 0.2 in 
@@ -157,20 +163,8 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
               (*> goto shouldn't wait when bandwidth-monitoring - but otherwise yes*)
               Time.sleep_ns @@ sec sleep_secs >>= fun () ->
               loop_write ~index:(succ index) ~connection_id flow
-            | Error `Eof ->
-              (* goto let O.error handle any kind of error instead ..*)
-              (*> goto add this (name differently?)*)
-              (* O.error_eof ~ip ~port; *)
-              (*> goto reuse this 'failure case' boilerplate*)
-              O.closing_flow ~ip ~port;
-              S.TCP.close flow >>= fun () ->
-              O.closed_flow ~ip ~port;
-              (*> goto reuse wait-time-on-error definition*)
-              Time.sleep_ns @@ sec 1. >>= fun () ->
-              loop_try_connect ()
-            | Error e ->
-              (*> goto add this *)
-              (* O.error_reading ~ip ~port ~err; *)
+            | Error err ->
+              O.error_reading ~ip ~port ~err;
               O.closing_flow ~ip ~port;
               S.TCP.close flow >>= fun () ->
               O.closed_flow ~ip ~port;
