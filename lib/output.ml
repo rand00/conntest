@@ -30,7 +30,7 @@ module type S = sig
 
       val connecting : ip:Ipaddr.t -> port:int -> unit
       val connected : ip:Ipaddr.t -> port:int -> unit
-      val writing : ip:Ipaddr.t -> port:int -> data:string -> unit
+      val writing : ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
       val error_connection : ip:Ipaddr.t -> port:int -> err:string -> unit
       val error_writing : ip:Ipaddr.t -> port:int -> err:Tcpip.Tcp.write_error
         -> unit
@@ -130,7 +130,7 @@ module Log_stdout : S = struct
         Log.info (fun m ->
           m "writing via tcp to %s:%d: %s"
             (Ipaddr.to_string ip) port
-            (data |> preview_big_string)
+            (data |> Cstruct.to_string |> preview_big_string)
         ) 
 
       let error_connection ~ip ~port ~err =

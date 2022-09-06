@@ -21,7 +21,6 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         | Error e ->
           let msg = Fmt.str "%a" S.TCP.pp_error e in
           Lwt_result.fail (`Msg msg)
-        (*< gomaybe try loop on timeout? - else can just wait on new req*)
         | Ok (`Data data) ->
           let* unfinished = match unfinished_packet with
             | None -> Packet.Tcp.init data |> Lwt.return
@@ -29,12 +28,13 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
               Packet.Tcp.append ~data unfinished |> Lwt.return
           in
           begin match unfinished with
+            | `Unfinished packet ->
+              loop_read ~flow ~dst ~dst_port @@ Some packet
             | `Done packet ->
               (*< goto there can be more data left that should be read as a new packet
                 .. see https://serverfault.com/questions/534063/can-tcp-and-udp-packets-be-split-into-pieces
               *)
               O.packet ~ip:dst ~port:dst_port packet;
-              (*goto goo send packet back (with empty data)*)
               let response_packet =
                 Packet.T.{ packet with data = "" }
                 |> Packet.to_string
@@ -50,11 +50,10 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
                   let msg = Fmt.str "%a" S.TCP.pp_write_error err in
                   Lwt_result.fail @@ `Msg msg
               end
-            | `Unfinished packet ->
-              loop_read ~flow ~dst ~dst_port @@ Some packet
           end
       in
       let callback flow =
+        Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
         let dst, dst_port = S.TCP.dst flow in
         O.new_connection ~ip:dst ~port:dst_port;
         loop_read ~flow ~dst ~dst_port None >>= function
@@ -88,9 +87,8 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
 
     let sec n = Int64.of_float (1e9 *. n)
 
-    (*> goto remove? - or do this for bandwidth-testing*)
-    let data_str = String.make 5_000_000 '%'
-    let data = Cstruct.of_string data_str
+    let bandwidth_testdata_str = String.make 5_000_000 '%'
+    let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str
     
     (*goto loop sending packets, to:
       * check if connection is up
@@ -136,23 +134,17 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         | Error read_err -> Lwt_result.fail @@ `Read read_err
       and loop_write ~index ~connection_id flow =
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
-        (* let data = "I'm "^name in *)
-        (*> goto currently this is only header - change name if keeping like this*)
-        let packet_str =
-          let open Packet.T in
-          let header = { index; connection_id } in
-          let packet = { header; data = "" } in (*< goto change format?*)
-          Packet.to_string ~override_data_len:(Cstruct.length data) packet
-        in
-        let packet = Cstruct.of_string packet_str in
-        O.writing ~ip ~port ~data:data_str;
-        S.TCP.writev flow [ packet; data ] >>= function
+        let header = Packet.T.{ index; connection_id } in
+        let data = bandwidth_testdata in
+        O.writing ~ip ~port ~data;
+        Packet.to_cstructs ~header ~data
+        |> S.TCP.writev flow >>= function
         | Ok () ->
           O.wrote_data ~ip ~port;
-          begin (*goo we are stuck here - does server send packet back?*)
+          begin
             loop_read_returning flow >>= function
             | Ok _response -> (*goto use response for stats*)
-              (*> goto shouldn't wait when bandwidth-monitoring*)
+              (*> goto shouldn't wait when bandwidth-monitoring - but otherwise yes*)
               (* Time.sleep_ns @@ sec 0.2 >>= fun () -> *)
               loop_write ~index:(succ index) ~connection_id flow
             | Error `Eof ->
