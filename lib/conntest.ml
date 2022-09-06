@@ -143,20 +143,12 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
         let sleep_secs = if monitor_bandwidth then 0.2 else 0.0 in 
         let header = Packet.T.{ index; connection_id } in
-        (* let data = if monitor_bandwidth then bandwidth_testdata else
-         *     Cstruct.of_string name
-         * in *)
-        (* O.writing ~ip ~port ~data; *)
-        let packet =
-          let data =
-            if monitor_bandwidth then bandwidth_testdata_str else
-              name
-          in
-          Packet.T.{ header; data }
-          |> Packet.to_string
-          |> Cstruct.of_string
+        let data = if monitor_bandwidth then bandwidth_testdata else
+            Cstruct.of_string name
         in
-        S.TCP.write flow packet >>= function
+        O.writing ~ip ~port ~data;
+        Packet.to_cstructs ~header ~data
+        |> S.TCP.writev flow >>= function
         | Ok () ->
           O.wrote_data ~ip ~port;
           begin
