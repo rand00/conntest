@@ -141,7 +141,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         | Error read_err -> Lwt_result.fail @@ `Read read_err
       and loop_write ~index ~connection_id flow =
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
-        let sleep_secs = if monitor_bandwidth then 0.2 else 0.0 in 
+        let sleep_secs = if monitor_bandwidth then 0.0 else 0.2 in 
         let header = Packet.T.{ index; connection_id } in
         let data = if monitor_bandwidth then bandwidth_testdata else
             Cstruct.of_string name
