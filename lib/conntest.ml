@@ -22,35 +22,42 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           let msg = Fmt.str "%a" S.TCP.pp_error e in
           Lwt_result.fail (`Msg msg)
         | Ok (`Data data) ->
-          let* unfinished = match unfinished_packet with
-            | None -> Packet.Tcp.init data |> Lwt.return
-            | Some unfinished ->
-              Packet.Tcp.append ~data unfinished |> Lwt.return
-          in
-          begin match unfinished with
-            | `Unfinished packet ->
-              loop_read ~flow ~dst ~dst_port @@ Some packet
-            | `Done packet ->
-              (*< goto there can be more data left that should be read as a new packet
-                .. see https://serverfault.com/questions/534063/can-tcp-and-udp-packets-be-split-into-pieces
-              *)
-              O.packet ~ip:dst ~port:dst_port packet;
-              let response_packet =
-                Packet.T.{ packet with data = "" }
-                |> Packet.to_string
-                |> Cstruct.of_string
-              in
-              begin
-                S.TCP.write flow response_packet >>= function
-                | Ok () ->
-                  (*> goto add this (naming?)*)
-                  (* O.responded_to_packet ~ip ~port; *)
-                  loop_read ~flow ~dst ~dst_port None
-                | Error err ->
-                  let msg = Fmt.str "%a" S.TCP.pp_write_error err in
-                  Lwt_result.fail @@ `Msg msg
-              end
-          end
+          read_and_respond ~flow ~dst ~dst_port ~data ~unfinished_packet
+      and read_and_respond ~flow ~dst ~dst_port ~data ~unfinished_packet =
+        let* unfinished = match unfinished_packet with
+          | None -> Packet.Tcp.init data |> Lwt.return
+          | Some unfinished ->
+            Packet.Tcp.append ~data unfinished |> Lwt.return
+        in
+        begin match unfinished with
+          | `Unfinished packet ->
+            loop_read ~flow ~dst ~dst_port @@ Some packet
+          | `Done (packet, more_data) ->
+            (*< goto there can be more data left that should be read as a new packet
+              .. see https://serverfault.com/questions/534063/can-tcp-and-udp-packets-be-split-into-pieces
+            *)
+            O.packet ~ip:dst ~port:dst_port packet;
+            let response_packet =
+              Packet.T.{ packet with data = "" }
+              |> Packet.to_string
+              |> Cstruct.of_string
+            in
+            begin
+              S.TCP.write flow response_packet >>= function
+              | Ok () ->
+                (*> goto add this (naming?)*)
+                (* O.responded_to_packet ~ip ~port; *)
+                begin match more_data with
+                  | None -> loop_read ~flow ~dst ~dst_port None
+                  | Some data ->
+                    read_and_respond ~flow ~dst ~dst_port ~data
+                      ~unfinished_packet
+                end
+              | Error err ->
+                let msg = Fmt.str "%a" S.TCP.pp_write_error err in
+                Lwt_result.fail @@ `Msg msg
+            end
+        end
       in
       let callback flow =
         Mirage_runtime.at_exit (fun () -> S.TCP.close flow);

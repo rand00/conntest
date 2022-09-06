@@ -126,18 +126,24 @@ module Tcp = struct
         Ok unfinished
     in
     let full_len = unfinished.header_len + unfinished.data_len in
-    (*> goto - tcp allows for 'data' to contain some of the next packet too
-      * .. so should check for >= full_len
-        * and return `Done (packet, buffer-tail)
-    *)
-    if Buffer.length unfinished.buffer = full_len then
+    if Buffer.length unfinished.buffer >= full_len then
       let header = Option.get unfinished.header in
       let data =
         Buffer.sub unfinished.buffer
           unfinished.header_len
           unfinished.data_len
       in
-      `Done { header; data }
+      let more_data =
+        if Buffer.length unfinished.buffer > full_len then
+          let rest =
+            Buffer.sub unfinished.buffer
+              full_len
+              (Buffer.length unfinished.buffer)
+          in
+          Some (Cstruct.of_string rest)
+        else None
+      in
+      `Done ({ header; data }, more_data)
     else
       `Unfinished unfinished
 
