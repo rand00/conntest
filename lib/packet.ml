@@ -73,6 +73,21 @@ module T = struct
 end
 include T
 
+let to_cstructs ~header ~data =
+  let header_str = Header.to_string header in
+  let header_len = String.length header_str in
+  let data_len = Cstruct.length data in
+  let lengths_str = String.concat "\n" [
+    Int.to_string header_len;
+    Int.to_string data_len;
+  ] ^ "\n"
+  in
+  [
+    lengths_str |> Cstruct.of_string;
+    header_str |> Cstruct.of_string;
+    data
+  ]
+
 let to_string ?override_data_len packet =
   let header_str = Header.to_string packet.header in
   let header_len = String.length header_str in
