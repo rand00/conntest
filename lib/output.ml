@@ -10,15 +10,14 @@ type connect_tcp_read_error = [
 
 module type S = sig
 
-  (*> goto all errors should be explicit, so user can get all the info wanted
-    .. and notty interface needs error values instead of just a string 
-  *)
-  
   module Listen : sig
 
     module Tcp : sig
       val new_connection : ip:Ipaddr.t -> port:int -> unit
       val closing_connection : ip:Ipaddr.t -> port:int -> unit
+      (*> goto all errors should be explicit, so user can get all the info wanted
+        .. and notty interface needs error values instead of just a string 
+      *)
       val error : ip:Ipaddr.t -> port:int -> err:string -> unit
       val registered_listener : port:int -> unit
       val packet : ip:Ipaddr.t -> port:int -> Packet.t -> unit
@@ -38,6 +37,9 @@ module type S = sig
       val connecting : ip:Ipaddr.t -> port:int -> unit
       val connected : ip:Ipaddr.t -> port:int -> unit
       val writing : ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
+      (*> goto all errors should be explicit, so user can get all the info wanted
+        .. and notty interface needs error values instead of just a string 
+      *)
       val error_connection : ip:Ipaddr.t -> port:int -> err:string -> unit
       val error_writing : ip:Ipaddr.t -> port:int
         -> err:(Tcpip.Tcp.write_error option) -> msg:string

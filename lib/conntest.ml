@@ -33,9 +33,6 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           | `Unfinished packet ->
             loop_read ~flow ~dst ~dst_port @@ Some packet
           | `Done (packet, more_data) ->
-            (*< goto there can be more data left that should be read as a new packet
-              .. see https://serverfault.com/questions/534063/can-tcp-and-udp-packets-be-split-into-pieces
-            *)
             O.packet ~ip:dst ~port:dst_port packet;
             let response_packet =
               Packet.T.{ packet with data = "" }
@@ -94,10 +91,12 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
 
     let sec n = Int64.of_float (1e9 *. n)
 
+    let sleep_ns_before_retry = sec 1.
+
     let bandwidth_testdata_str = String.make 5_000_000 '%'
     let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str
     
-    (*goto loop sending packets, to:
+    (*Note: howto: loop sending packets, to:
       * check if connection is up
       * check latency
       * optionally monitor bandwidth
@@ -112,7 +111,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         | Error err ->
           let err = Fmt.str "%a" S.TCP.pp_error err in
           O.error_connection ~ip ~port ~err;
-          Time.sleep_ns @@ sec 1. >>= fun () ->
+          Time.sleep_ns sleep_ns_before_retry >>= fun () ->
           loop_try_connect ()
         | Ok flow ->
           O.connected ~ip ~port;
@@ -160,7 +159,6 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           begin
             loop_read_returning flow >>= function
             | Ok _response -> (*goto use response for stats*)
-              (*> goto shouldn't wait when bandwidth-monitoring - but otherwise yes*)
               Time.sleep_ns @@ sec sleep_secs >>= fun () ->
               loop_write ~index:(succ index) ~connection_id flow
             | Error err ->
@@ -168,8 +166,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
               O.closing_flow ~ip ~port;
               S.TCP.close flow >>= fun () ->
               O.closed_flow ~ip ~port;
-              (*> goto reuse wait-time-on-error definition*)
-              Time.sleep_ns @@ sec 1. >>= fun () ->
+              Time.sleep_ns sleep_ns_before_retry >>= fun () ->
               loop_try_connect ()
           end
         | Error private_err ->
@@ -182,7 +179,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           O.closing_flow ~ip ~port;
           S.TCP.close flow >>= fun () ->
           O.closed_flow ~ip ~port;
-          Time.sleep_ns @@ sec 1. >>= fun () ->
+          Time.sleep_ns sleep_ns_before_retry >>= fun () ->
           loop_try_connect ()
       in
       loop_try_connect ()
