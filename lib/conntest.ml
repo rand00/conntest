@@ -136,7 +136,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
         let sleep_secs = if monitor_bandwidth then 0.2 else 0.0 in 
         let header = Packet.T.{ index; connection_id } in
-        let data = if monitor_bandwidth then bandwidth_testdata else name in
+        let data = if monitor_bandwidth then bandwidth_testdata else
+            Cstruct.of_string name
+        in
         O.writing ~ip ~port ~data;
         Packet.to_cstructs ~header ~data
         |> S.TCP.writev flow >>= function
@@ -159,7 +161,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
               (*> goto reuse wait-time-on-error definition*)
               Time.sleep_ns @@ sec 1. >>= fun () ->
               loop_try_connect ()
-            | Error _ ->
+            | Error e ->
               (*> goto add this *)
               (* O.error_reading ~ip ~port ~err; *)
               O.closing_flow ~ip ~port;

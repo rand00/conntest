@@ -1,6 +1,13 @@
 
 (*goto rename this module to Ui ? - Output can mean many things.. *)
 
+type connect_tcp_read_error = [
+  | `Eof
+  | `Msg of string
+  | `Tcp of (Tcpip.Tcp.error option * string (*message*))
+  (*< Note: the option is because of private variants*)
+]
+
 module type S = sig
 
   (*> goto all errors should be explicit, so user can get all the info wanted
@@ -34,6 +41,9 @@ module type S = sig
       val error_connection : ip:Ipaddr.t -> port:int -> err:string -> unit
       val error_writing : ip:Ipaddr.t -> port:int
         -> err:(Tcpip.Tcp.write_error option) -> msg:string
+        -> unit
+      val error_reading : ip:Ipaddr.t -> port:int
+        -> err:connect_tcp_read_error 
         -> unit
       val wrote_data : ip:Ipaddr.t -> port:int -> unit
       val closing_flow : ip:Ipaddr.t -> port:int -> unit
@@ -144,11 +154,7 @@ module Log_stdout : S = struct
           f "error writing via tcp to %s:%d:\n%s" (Ipaddr.to_string ip) port msg
         )
 
-      (* let error_writing_str ~ip ~port ~err =
-       *   Log.warn (fun f ->
-       *     f "error writing via tcp to %s:%d:\n%s"
-       *       (Ipaddr.to_string ip) port
-       *       err) *)
+      let error_reading ~ip ~port ~err:_ = failwith "todo"
         
       let wrote_data ~ip ~port = 
         Log.info (fun m ->
