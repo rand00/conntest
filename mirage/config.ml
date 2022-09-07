@@ -36,6 +36,7 @@ let listens =
 let connections =
   let long_name = "connect" in
   let docv = "<URI>" in
+  (*goto list other possible query params*)
   let doc = Printf.sprintf
       "Which other conntest-instance URIs to connect to. Query \
        parameters are used to pass extra options, which includes \
@@ -57,8 +58,9 @@ let keys = [
  *     ~sublibs:["mirage"] *)
 
 let packages = [
+  package "conntest";
   (* package "conntest" ~pin:"git+https://github.com/rand00/conntest.git"; *)
-  package "conntest" ~pin:"git+https://github.com/rand00/conntest.git#20220906_WIP";
+  (* package "conntest" ~pin:"git+https://github.com/rand00/conntest.git#20220906_WIP"; *)
   (*< add commit to string when release? e.g. #3c85fff2aba1bbf0d0e7f05427d7e41f9b7a7cc3*)
   package "uri";
   package "notty" ~pin:"git+https://github.com/rand00/notty.git#414_w_mirage"
