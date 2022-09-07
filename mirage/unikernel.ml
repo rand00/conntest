@@ -73,6 +73,7 @@ module Main
       | (i, sub) -> let+ i = String.Sub.to_int i in i, sub
     in
     let+ factor = match String.Sub.to_string sub |> String.Ascii.lowercase with
+      | "b" | "" -> Some 1
       | "kb" -> Some 1_000
       | "mb" -> Some 1_000_000
       | "gb" -> Some 1_000_000_000
