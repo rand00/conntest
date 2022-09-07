@@ -80,14 +80,13 @@ module Main
     in
     n * factor
 
+  (*goto come up with some way to err on bad options given *)
   let find_option ~options tag ~default ~parse_vs =
     options |> List.fold_left (fun acc option ->
-      let* _acc = acc in
+      let* acc = acc in
       match option with 
       | tag', vs when String.equal tag tag' -> parse_vs vs
-      | option_name, _ ->
-        let msg = Fmt.str "Unknown option: '%s'" option_name in
-        Error (`Msg msg)
+      | _, _ -> Ok acc
     ) (Ok default)
 
   let try_initiate_connection ~stack ~name uri_str =
