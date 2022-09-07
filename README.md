@@ -8,6 +8,13 @@ cd conntest
 mirage configure -t <TARGET> -f mirage/config.ml && make depend && mirage build -f mirage/config.ml
 ```
 
+## CLI help
+
+After compiling for `unix` - you can get a manual page, where the most relevant runtime parameters are under `UNIKERNEL PARAMETERS` and `APPLICATION OPTIONS`:
+```
+mirage/dist/conntest --help
+```
+
 ## Running 
 
 ### `unix` target
