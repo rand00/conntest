@@ -33,7 +33,6 @@ mirage/dist/conntest --name sender --connect 'tcp://127.0.0.1:1234?monitor-bandw
 
 Starting a `conntest` that only listens:
 ```
-mirage/dist/conntest --name receiver --listen tcp:1234
 solo5-spt --net:service=tap100 mirage/dist/conntest.spt --ipv4 10.0.0.2/24 --name miav0 --listen tcp:1234
 ```
 
