@@ -23,6 +23,10 @@ depends: [
   "yojson"
   "ppx_deriving_yojson"
   "uuidm"
+  "mirage-time"
+  "mirage-runtime"
+  "cstruct"
+  "stringext"
 ]
 
 pin-depends: [
