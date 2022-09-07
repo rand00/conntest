@@ -80,14 +80,15 @@ module Main
     in
     n * factor
 
-  (*goto come up with some way to err on bad options given *)
   let find_option ~options tag ~default ~parse_vs =
     options |> List.fold_left (fun acc option ->
-      let* acc = acc in
+      let* (acc_v, acc_options) = acc in
       match option with 
-      | tag', vs when String.equal tag tag' -> parse_vs vs
-      | _, _ -> Ok acc
-    ) (Ok default)
+      | tag', vs when String.equal tag tag' ->
+        let+ v = parse_vs vs in
+        v, acc_options
+      | option -> Ok (acc_v, option :: acc_options)
+    ) (Ok (default, []))
 
   let try_initiate_connection ~stack ~name uri_str =
     begin
@@ -123,14 +124,14 @@ module Main
       in
       let options = Uri.query uri
       in
-      let* monitor_bandwidth_flag =
+      let* monitor_bandwidth_flag, options =
         let parse_vs = function
           | [] -> Ok true
           | _ -> Error (`Msg "'monitor-bandwidth' is a flag")
         in
         find_option ~options "monitor-bandwidth" ~default:false ~parse_vs
       in
-      let+ monitor_bandwidth_packet_size =
+      let* monitor_bandwidth_packet_size, options =
         let parse_vs = function
           | [ str ] ->
             parse_file_size str
@@ -138,6 +139,15 @@ module Main
           | _ -> Error (`Msg "'packet-size' takes an argument like '2MB'")
         in
         find_option ~options "packet-size" ~default:5_000_000 ~parse_vs
+      in
+      let+ () = match options with
+        | [] -> Ok ()
+        | _  ->
+          let options = List.map fst options in
+          let msg =
+            Fmt.str "Error: unknown options: [%s]" (String.concat ", " options)
+          in
+          Error (`Msg msg)
       in
       let monitor_bandwidth = object
         method enabled = monitor_bandwidth_flag
