@@ -57,14 +57,14 @@ let keys = [
  *     ~sublibs:["mirage"] *)
 
 let packages = [
-  package "conntest" ~pin:"git+https://github.com/rand00/conntest.git";
-  (* package "conntest" ~pin:"git+https://github.com/rand00/conntest.git#1ecc489d1848b109112fb23a47c9b6557493270b"; *)
-  (*< add commit to string? e.g. #3c85fff2aba1bbf0d0e7f05427d7e41f9b7a7cc3*)
+  (* package "conntest" ~pin:"git+https://github.com/rand00/conntest.git"; *)
+  package "conntest" ~pin:"git+https://github.com/rand00/conntest.git#20220906_WIP";
+  (*< add commit to string when release? e.g. #3c85fff2aba1bbf0d0e7f05427d7e41f9b7a7cc3*)
   package "uri";
   package "notty" ~pin:"git+https://github.com/rand00/notty.git#414_w_mirage"
-    ~sublibs:["mirage"]
-  (* notty_pkg; *)
+    ~sublibs:["mirage"];
   (*~pin:"git+https://github.com/kit-ty-kate/notty.git#414"*)
+  package "astring";
 ]
 
 module Notty_dev = struct

@@ -5,7 +5,6 @@ module Output = Output
 let (let*) = Result.bind 
 let (let+) x f = Result.map f x 
 
-
 module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
 
   module Listen = struct
@@ -93,9 +92,6 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
 
     let sleep_ns_before_retry = sec 1.
 
-    let bandwidth_testdata_str = String.make 5_000_000 '%'
-    let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str
-    
     (*Note: howto: loop sending packets, to:
       * check if connection is up
       * check latency
@@ -103,6 +99,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
     *)
     let tcp ~stack ~name ~port ~ip ~monitor_bandwidth =
       let module O = O.Connect.Tcp in
+      let bandwidth_testdata_str = String.make monitor_bandwidth#packet_size '%' in
+      let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str
+      in
       let rec loop_try_connect () =
         let connection_id = Uuidm.(v `V4 |> to_string) in
         O.connecting ~ip ~port;
@@ -146,9 +145,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           Lwt_result.fail @@ `Read (err, msg)
       and loop_write ~index ~connection_id flow =
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
-        let sleep_secs = if monitor_bandwidth then 0.0 else 0.2 in 
+        let sleep_secs = if monitor_bandwidth#enabled then 0.0 else 0.2 in 
         let header = Packet.T.{ index; connection_id } in
-        let data = if monitor_bandwidth then bandwidth_testdata else
+        let data = if monitor_bandwidth#enabled then bandwidth_testdata else
             Cstruct.of_string name
         in
         O.writing ~ip ~port ~data;
