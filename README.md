@@ -1,10 +1,10 @@
-`conntest` is a MirageOS unikernel that acts as a client and server to any 
-amount of other instances of itself. This way you construct a graph of 
+`conntest` is a MirageOS unikernel that acts as a client and server to 
+other instances of itself. This way you construct a graph of 
 connected unikernels, either via `TCP` or `UDP`. `conntest` automatically 
 reconnects when the connection is lost, so you can just take down an instance 
 and reconfigure it via CLI.
 
-**Usecases**
+## Usecases
 * Testing that your networking setup works - e.g. when you use  bridges, 
   `TAP` devices, `NAT`, firewall rules etc.
 * Testing the connection-stats between different:
@@ -14,7 +14,7 @@ and reconfigure it via CLI.
   at the same time.
 * Playing around with distributed unikernel setups.
 
-**WIP**
+## Work in progress
 * A `notty` CLI UI (via `mirage-console`) listing connections and their stats
   * But having the possibility of choosing a simple logging output 
 * Show stats:
