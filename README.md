@@ -1,6 +1,5 @@
 `conntest` is a MirageOS unikernel that acts as a client and server to 
-other instances of itself. This way you construct a graph of 
-connected unikernels, either via `TCP` or `UDP`. `conntest` automatically 
+other instances of itself, either via `TCP` or `UDP`. It automatically 
 reconnects when the connection is lost, so you can just take down an instance 
 and reconfigure it via CLI.
 
