@@ -1,19 +1,20 @@
-`conntest` is a MirageOS unikernel that acts as a client and server to 
+# `conntest`
+
+A MirageOS unikernel that acts as a client and server to 
 other instances of itself, either via `TCP` or `UDP`. It automatically 
-reconnects when the connection is lost, so you can just take down an instance 
+reconnects when the connection is lost, so you can e.g. take down an instance 
 and reconfigure it via CLI.
 
-## Usecases
+### Usecases
 * Testing that your networking setup works - e.g. when you use  bridges, 
   `TAP` devices, `NAT`, firewall rules etc.
-* Testing the connection-stats between different:
-  * servers
-  * MirageOS backends and network-stacks
+* Testing the connection-stats between different servers, MirageOS compilation-targets and network-stacks.
+  * This can e.g. be useful if you plan to rearrange where/how your unikernel instances are run.
 * Stress-testing connections by sending lots of data to/from several instances
   at the same time.
 * Playing around with distributed unikernel setups.
 
-## Work in progress
+### Work in progress
 * A `notty` CLI UI (via `mirage-console`) listing connections and their stats
   * But having the possibility of choosing a simple logging output 
 * Show stats:
@@ -21,6 +22,11 @@ and reconfigure it via CLI.
   * latency
   * lost packets (`UDP`)
   * packets out of order (`UDP`)
+
+### Suggest features!
+
+If you find this unikernel useful, but it's e.g. missing some stats that you are interested in - then make an issue/PR (: 
+
 
 ## Compiling
 
@@ -30,6 +36,9 @@ git clone https://github.com/rand00/conntest
 cd conntest
 mirage configure -t <TARGET> -f mirage/config.ml && make depend && mirage build -f mirage/config.ml
 ```
+Targets:
+* For `spt` you need to run GNU/Linux and install `solo5`. 
+* For `hvt` you need a baremetal server (i.e. supporting virtualization) or a VPS supporting nested virtualization.
 
 ## CLI help
 
