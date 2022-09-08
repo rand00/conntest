@@ -15,6 +15,7 @@ and reconfigure it via CLI.
 * Playing around with distributed unikernel setups.
 
 ### Work in progress
+* Full `UDP` support - `TCP` will be done first
 * A `notty` CLI UI (via `mirage-console`) listing connections and their stats
   * But having the possibility of choosing a simple logging output 
 * Show stats:
@@ -24,9 +25,7 @@ and reconfigure it via CLI.
   * packets out of order (`UDP`)
 
 ### Suggest features!
-
 If you find this unikernel useful, but it's e.g. missing some stats that you are interested in - then make an issue/PR (: 
-
 
 ## Compiling
 
