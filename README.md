@@ -38,7 +38,7 @@ mirage configure -t <TARGET> -f mirage/config.ml && make depend && mirage build 
 ```
 Targets:
 * For `spt` you need to run GNU/Linux and install `solo5`. 
-* For `hvt` you need a baremetal server (i.e. supporting virtualization) or a VPS supporting nested virtualization.
+* For `hvt` you need a baremetal server (i.e. supporting virtualization) or a VPS supporting nested virtualization. Also depends on `solo5`.
 
 ## CLI help
 
