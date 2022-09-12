@@ -1,0 +1,28 @@
+Name: spt@local // ip: 10.0.0.4 // port: 3241 
+
+-- Output-connections:
+   [proto]         [ip]       [latency] [bandwidth] [uptime] [retries] [pkts sent] [pkts seen] [pkt size] [lost] [out of order]
+Name:miav0 
+    TCP    123.234.54.34:8023   15 ms    100MB/s     1h3m24s    1         3924        392         5MB       -         -
+Name:miavmiavmiavmiavmiav
+    TCP    123.234.54.34:8024   100 ms       -        1m4s      2         3293        10          5MB       -         -
+Name:miav3
+    UDP    123.0.0.0:8024       100 ms       -        2m8s      0         232         2030        2MB      324        32
+
+-- Input-connections:
+[TCP]  [name]                         [ip]       [latency] [bandwidth] [uptime] [pkts sent] [pkts seen] [pkt size]
+        miavmmoomomo          123.234.54.34:8024   100 ms       -       1m4s       112          10           -
+
+[UDP]  [name]                         [ip]       [latency] [bandwidth] [uptime] [pkts sent] [pkts seen] [pkt size] [lost] [out of order]
+        miav99                123.0.0.0:8024       100 ms       -        2m8s      322         2030         -       324    32
+
+
+
+
+
+
+
+
+
+
+

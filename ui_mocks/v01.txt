@@ -1,0 +1,25 @@
+miav532323232 @ 10.0.0.4:3241
+
+-- Output-connections:
+[proto]  [name]                         [ip]       [latency] [bandwidth] [uptime] [pkts sent] [pkts seen] [pkt size] [lost] [out of order]
+ TCP      miav0                 123.234.54.34:8023   15 ms    100MB/sec   1h3m24s    3924        392         5MB       -         -
+ TCP      miavmiavmiavmiavmiav  123.234.54.34:8024   100 ms       -        1m4s      3293        10           -        -         -
+ UDP      miav3                 123.0.0.0:8024       100 ms       -        2m8s      232         2030        2MB      324        32
+
+-- Input-connections:
+[TCP]  [name]                         [ip]       [latency] [bandwidth] [uptime] [pkts sent] [pkts seen] [pkt size]
+        miavmmoomomo          123.234.54.34:8024   100 ms       -       1m4s       112          10           -
+
+[UDP]  [name]                         [ip]       [latency] [bandwidth] [uptime] [pkts sent] [pkts seen] [pkt size] [lost] [out of order]
+        miav99                123.0.0.0:8024       100 ms       -        2m8s      322         2030         -       324    32
+
+
+
+
+
+
+
+
+
+
+
