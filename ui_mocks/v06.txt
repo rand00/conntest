@@ -1,0 +1,31 @@
+                       spt@local
+
+------------------ Client-connections -------------------------
+To: miav0 / ip: 123.234.54.34 / port: 74831
+
+|prot|uptime |#sent|#recv|lat |bndwdth |p-size|retr|#lost|#ooo
+|TCP |1h3m24s|3924 |392  |15ms|100MB/s |5MB   |1   |-    |-   
+---------------------------------------------------------------
+To: mqwidmqwidmqiwdmqwidm / ip: 123.234.54.34 / port: 9999
+
+|prot|uptime |#sent|#recv|lat |bndwdth |p-size|retr|#lost|#ooo
+|TCP |1h3m24s|3924 |392  |15ms|100MB/s |5MB   |1   |-    |-   
+
+------------------ Server-connections -------------------------
+From: fo / ip: 123.234.54.34 / port: 99999
+
+|prot|uptime |#sent|#recv
+|TCP |1h3m24s|3924 |392  
+---------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
