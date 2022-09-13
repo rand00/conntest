@@ -16,11 +16,11 @@ module type S = sig
 
     module Tcp : sig
       val new_connection : ip:Ipaddr.t -> port:int -> unit
-      val closing_connection : ip:Ipaddr.t -> port:int -> unit
+      val closing_connection : conn_id:string option -> ip:Ipaddr.t -> port:int -> unit
       (*> goto all errors should be explicit, so user can get all the info wanted
         .. and notty interface needs error values instead of just a string 
       *)
-      val error : ip:Ipaddr.t -> port:int -> err:string -> unit
+      val error : conn_id:string option -> ip:Ipaddr.t -> port:int -> err:string -> unit
       val registered_listener : port:int -> unit
       val packet : ip:Ipaddr.t -> port:int -> Packet.t -> unit
     end
@@ -86,12 +86,12 @@ module Log_stdout () : S = struct
           m "new tcp connection from %s:%d"
             (Ipaddr.to_string ip) port)
 
-      let closing_connection ~ip ~port =
+      let closing_connection ~conn_id:_ ~ip ~port =
         Log.info (fun f -> f "closing tcp connection to %s:%d"
             (Ipaddr.to_string ip) port
         )
 
-      let error ~ip ~port ~err =
+      let error ~conn_id:_ ~ip ~port ~err =
         Log.warn (fun f ->
           f "error reading data from tcp connection %s:%d:\n%s"
             (Ipaddr.to_string ip) port
@@ -240,6 +240,7 @@ module Notty_ui (Time : Mirage_time.S) = struct
       type t = {
         ip : Ipaddr.t;
         port : int;
+        conn_id : string option;
       }
 
     end
@@ -260,24 +261,19 @@ module Notty_ui (Time : Mirage_time.S) = struct
         let e, eupd = E.create ()
 
         let new_connection ~ip ~port =
-          eupd @@ `New_connection {ip; port}
+          eupd @@ `New_connection {ip; port; conn_id = None}
 
-        (*goto need packet-header to be given too - to track connection-id
-          .. unless it's not tracked at all, and it's just no. of new/closed
-             connections that is tracked (and from that also open connections)
-             * @problem; the stats can't be bound to each connection from ip/port alone
-               .. as there can be several open connections to same ip/port
-        *)
-        let closing_connection ~ip ~port =
-          eupd @@ `Closing_connection {ip; port}
+        let closing_connection ~conn_id ~ip ~port =
+          eupd @@ `Closing_connection {ip; port; conn_id}
 
-        let error ~ip ~port ~err =
-          eupd @@ `Error ({ip; port}, err)
+        let error ~conn_id ~ip ~port ~err =
+          eupd @@ `Error ({ip; port; conn_id}, err)
 
         let registered_listener ~port = () 
 
         let packet ~ip ~port packet =
-          eupd @@ `Packet ({ip; port}, packet.Packet.T.header)
+          let conn_id = Some packet.Packet.T.header.connection_id in
+          eupd @@ `Packet {ip; port; conn_id}
 
       end
 

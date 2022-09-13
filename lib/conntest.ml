@@ -15,18 +15,21 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
       let rec loop_read ~flow ~dst ~dst_port ~conn_id unfinished_packet =
         S.TCP.read flow >>= function
         | Ok `Eof ->
-          O.closing_connection ~ip:dst ~port:dst_port;
+          O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
           S.TCP.close flow >|= fun () -> Ok ()
         | Error e ->
           let msg = Fmt.str "%a" S.TCP.pp_error e in
-          Lwt_result.fail (`Msg msg)
+          Lwt_result.fail (`Msg msg, conn_id)
         | Ok (`Data data) ->
           read_and_respond ~flow ~dst ~dst_port ~data ~conn_id ~unfinished_packet
       and read_and_respond ~flow ~dst ~dst_port ~data ~conn_id ~unfinished_packet =
-        let* unfinished = match unfinished_packet with
-          | None -> Packet.Tcp.init data |> Lwt.return
-          | Some unfinished ->
-            Packet.Tcp.append ~data unfinished |> Lwt.return
+        let* unfinished =
+          begin match unfinished_packet with
+            | None -> Packet.Tcp.init data |> Lwt.return
+            | Some unfinished ->
+              Packet.Tcp.append ~data unfinished |> Lwt.return
+          end
+          |> Lwt_result.map_error (fun e -> e, conn_id)
         in
         begin match unfinished with
           | `Unfinished packet ->
@@ -52,7 +55,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
                 end
               | Error err ->
                 let msg = Fmt.str "%a" S.TCP.pp_write_error err in
-                Lwt_result.fail @@ `Msg msg
+                Lwt_result.fail (`Msg msg, conn_id)
             end
         end
       in
@@ -62,9 +65,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         O.new_connection ~ip:dst ~port:dst_port;
         loop_read ~flow ~dst ~dst_port ~conn_id:None None >>= function
         | Ok () -> Lwt.return_unit
-        | Error (`Msg err) ->
-          O.error ~ip:dst ~port:dst_port ~err;
-          O.closing_connection ~ip:dst ~port:dst_port;
+        | Error (`Msg err, conn_id) ->
+          O.error ~conn_id ~ip:dst ~port:dst_port ~err;
+          O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
           S.TCP.close flow 
       in
       Mirage_runtime.at_exit (fun () ->
