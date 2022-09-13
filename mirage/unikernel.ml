@@ -18,8 +18,11 @@ module Main
     (S : Tcpip.Stack.V4V6)
 = struct
 
-  module Output = Conntest.Output.Log_stdout
-  module Ct = Conntest.Make(Time)(S)(Output)
+  (*> goto choose output module via CLI*)
+  (* module Ui = Conntest.Output.Log_stdout() *)
+  module Ui = Conntest.Output.Notty_ui(Time)
+
+  module Ct = Conntest.Make(Time)(S)(Ui.Input_event)
   
   let try_register_listener ~stack input =
     begin match input with
@@ -182,36 +185,29 @@ module Main
       );
       exit 1
 
-  let test_image ~dims:_ i =
-    let open Notty in
-    I.string ~attr:A.(bg red) @@ Fmt.str "%d" i
+  let render_ui ~console ~init_size () =
+    let open Lwt.Infix in
+    Notty_term.create ~init_size console >>= function
+    | Error _ ->
+      (*> goto can this put errors into notty-ui without divergence?*)
+      Logs.err (fun m -> m "ERROR: render notty ui");
+      Lwt.return_unit
+    | Ok term ->
+      begin
+        Mirage_runtime.at_exit (fun () ->
+          Notty_term.close term
+        );
+        Ui.image_e |> Lwt_react.E.map_s (fun image ->
+          Notty_term.write term @@ `Image image >|= function
+          | Ok () -> ()
+          | Error _ -> Logs.err (fun m -> m "ERROR: render notty ui")
+        ) |> Lwt_react.E.keep;
+        Ui.init ()
+      end
   
-  let test_notty ~console ~init_size () =
-    let open Lwt_result.Syntax in
-    begin
-      let* term = Notty_term.create ~init_size console in
-      Mirage_runtime.at_exit (fun () ->
-        Notty_term.close term
-      );
-      let fps = 60. in
-      let fps_sleep_ns = 1e9 /. fps in
-      let rec loop_render i =
-        Time.sleep_ns @@ Int64.of_float fps_sleep_ns >>= fun () ->
-        let image = test_image ~dims:init_size i in
-        let* () = Notty_term.write term @@ `Image image in
-        loop_render @@ succ i
-      in
-      loop_render 0
-    end
-    |> Lwt.map (function
-      | Ok () -> ()
-      | Error _ ->
-        Logs.err (fun m -> m "ERROR: test_notty")
-    )
-
-  let start _console _notty _time stack =
-    let _term_size = 70, 11 in
-    (* Lwt.async @@ test_notty ~console ~init_size:term_size; *)
+  let start console _notty _time stack =
+    let term_size = 70, 11 in
+    Lwt.async @@ render_ui ~console ~init_size:term_size;
     let name = Key_gen.name () in
     Lwt.async begin fun () -> 
       Key_gen.listen ()

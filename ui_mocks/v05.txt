@@ -1,21 +1,20 @@
-Name: spt@local / ip: 10.0.0.4 / port: 3241 
----------------------------------------------------------------
------------------- Output-connections -------------------------
+                       spt@local
+------------------ Client-connections -------------------------
 To: miav0 / ip: 123.234.54.34 / port: 74831
 
-|prot|lat |bandwdth|uptime |retr|p-size|#sent|#recv|#lost|#ooo|
-|TCP |15ms|100MB/s |1h3m24s|1   |5MB   |3924 |392  |-    |-   |
+|prot|lat |bandwdth|uptime |retr|p-size|#sent|#recv|#lost|#ooo
+|TCP |15ms|100MB/s |1h3m24s|1   |5MB   |3924 |392  |-    |-   
 ---------------------------------------------------------------
 To: mqwidmqwidmqiwdmqwidm / ip: 123.234.54.34 / port: 9999
 
-|prot|lat |bndwdth |uptime |retr|p-size|#sent|#recv|#lost|#ooo|
-|TCP |15ms|100MB/s |1h3m24s|1   |5MB   |3924 |392  |-    |-   |
----------------------------------------------------------------
------------------- Input-connections --------------------------
+|prot|lat |bndwdth |uptime |retr|p-size|#sent|#recv|#lost|#ooo
+|TCP |15ms|100MB/s |1h3m24s|1   |5MB   |3924 |392  |-    |-   
+
+------------------ Server-connections -------------------------
 From: fo / ip: 123.234.54.34 / port: 99999
 
-|prot|lat |bandwdth|uptime |retr|p-size|#sent|#recv|#lost|#ooo|
-|TCP |15ms|100MB/s |1h3m24s|1   |5MB   |3924 |392  |-    |-   |
+|prot|lat |bandwdth|uptime |retr|p-size|#sent|#recv|#lost|#ooo
+|TCP |15ms|100MB/s |1h3m24s|1   |5MB   |3924 |392  |-    |-   
 ---------------------------------------------------------------
 
 

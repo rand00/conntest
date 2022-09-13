@@ -27,6 +27,7 @@ depends: [
   "mirage-runtime"
   "cstruct"
   "stringext"
+  "lwt_react"
 ]
 
 pin-depends: [

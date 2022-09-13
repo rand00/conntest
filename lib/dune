@@ -18,6 +18,7 @@
   stringext
   ;; decoders-jsonm
   ;; decoders-msgpck
+  lwt_react
   )
  (preprocess
   (pps

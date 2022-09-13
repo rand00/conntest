@@ -63,7 +63,7 @@ module type S = sig
 
 end
 
-module Log_stdout : S = struct
+module Log_stdout () : S = struct
 
   let src = Logs.Src.create "conntest" ~doc:"conntest events"
   module Log = (val Logs.src_log src : Logs.LOG)
@@ -195,5 +195,156 @@ module Log_stdout : S = struct
     end
 
   end
+
+end
+
+(*> goto make this fit S signature, or inner module?*)
+module Notty_ui (Time : Mirage_time.S) = struct
+
+  open Lwt_react
+  open Lwt.Infix 
+
+  module Tick = struct
+
+    let fps = 60. 
+    let fps_sleep_ns = 1e9 /. fps 
+
+    let e, eupd = E.create ()
+
+    let loop_feed () =
+      let rec aux i =
+        eupd i;
+        Time.sleep_ns @@ Int64.of_float fps_sleep_ns >>= fun () ->
+        aux @@ succ i
+      in
+      aux 0
+
+  end
+
+  let init () = Tick.loop_feed ()
+
+  module T = struct
+
+    module Connection = struct
+
+      type id = Uuidm.t
+
+    end
+
+    module Pier = struct
+
+      type t = {
+        ip : Ipaddr.t;
+        port : int;
+      }
+
+    end
+
+  end
+  open T.Connection
+  open T.Pier
+  
+  module Input_event : S = struct
+
+    module Listen = struct
+
+      module Tcp = struct
+
+        let e, eupd = E.create ()
+
+        let new_connection ~ip ~port =
+          eupd @@ `New_connection {ip; port}
+
+        (*goto need packet-header to be given too - to track connection-id
+          .. unless it's not tracked at all, and it's just no. of new/closed
+             connections that is tracked (and from that also open connections)
+             * @problem; the stats can't be bound to each connection from ip/port alone
+               .. as there can be several open connections to same ip/port
+        *)
+        let closing_connection ~ip ~port =
+          eupd @@ `Closing_connection {ip; port}
+
+        let error ~ip ~port ~err =
+          eupd @@ `Error ({ip; port}, err)
+
+        let registered_listener ~port = () 
+
+        let packet ~ip ~port packet =
+          eupd @@ `Packet ({ip; port}, packet.Packet.T.header)
+
+      end
+
+      module Udp = struct
+
+        let data ~ip ~port ~data =
+          () (*goto*)
+
+        let registered_listener ~port =
+          () (*goto*)
+
+      end
+
+    end
+
+    module Connect = struct
+
+      module Tcp = struct
+
+        let e, eupd = E.create ()
+
+        let connecting ~ip ~port =
+          () (*goto*)
+
+        let connected ~ip ~port =
+          () (*goto*)
+
+        let writing ~ip ~port ~data =
+          () (*goto*)
+
+        let error_connection ~ip ~port ~err =
+          () (*goto*)
+
+        let error_writing ~ip ~port ~err:_ ~msg =
+          () (*goto*)
+
+        let error_reading ~ip ~port ~err =
+          () (*goto*)
+
+        let wrote_data ~ip ~port = 
+          () (*goto*)
+
+        let closing_flow ~ip ~port =
+          () (*goto*)
+
+        let closed_flow ~ip ~port =
+          () (*goto*)
+
+      end
+
+      module Udp = struct
+
+        let writing ~ip ~port ~data =
+          () (*goto*)
+
+      end
+
+    end
+
+  end
+
+  module Render = struct 
+
+    open Notty 
+
+    let image_s =
+      I.string ~attr:A.(bg red) @@ Fmt.str "Not implemented"
+      |> S.const
+
+    let image_e =
+      image_s |> S.sample (fun _ image -> image) Tick.e
+
+  end
+
+  let image_e = Render.image_e
 
 end
