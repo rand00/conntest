@@ -12,7 +12,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
     let tcp stack port =
       let module O = O.Listen.Tcp in
       let open Lwt_result.Syntax in
-      let rec loop_read ~flow ~dst ~dst_port unfinished_packet =
+      let rec loop_read ~flow ~dst ~dst_port ~conn_id unfinished_packet =
         S.TCP.read flow >>= function
         | Ok `Eof ->
           O.closing_connection ~ip:dst ~port:dst_port;
@@ -21,8 +21,8 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           let msg = Fmt.str "%a" S.TCP.pp_error e in
           Lwt_result.fail (`Msg msg)
         | Ok (`Data data) ->
-          read_and_respond ~flow ~dst ~dst_port ~data ~unfinished_packet
-      and read_and_respond ~flow ~dst ~dst_port ~data ~unfinished_packet =
+          read_and_respond ~flow ~dst ~dst_port ~data ~conn_id ~unfinished_packet
+      and read_and_respond ~flow ~dst ~dst_port ~data ~conn_id ~unfinished_packet =
         let* unfinished = match unfinished_packet with
           | None -> Packet.Tcp.init data |> Lwt.return
           | Some unfinished ->
@@ -30,8 +30,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         in
         begin match unfinished with
           | `Unfinished packet ->
-            loop_read ~flow ~dst ~dst_port @@ Some packet
+            loop_read ~flow ~dst ~dst_port ~conn_id @@ Some packet
           | `Done (packet, more_data) ->
+            let conn_id = Some packet.Packet.T.header.connection_id in
             O.packet ~ip:dst ~port:dst_port packet;
             let response_packet =
               Packet.T.{ packet with data = "" }
@@ -44,9 +45,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
                 (*> goto add this (naming?)*)
                 (* O.responded_to_packet ~ip ~port; *)
                 begin match more_data with
-                  | None -> loop_read ~flow ~dst ~dst_port None
+                  | None -> loop_read ~flow ~dst ~dst_port ~conn_id None
                   | Some data ->
-                    read_and_respond ~flow ~dst ~dst_port ~data
+                    read_and_respond ~flow ~dst ~dst_port ~data ~conn_id
                       ~unfinished_packet
                 end
               | Error err ->
@@ -59,7 +60,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
         let dst, dst_port = S.TCP.dst flow in
         O.new_connection ~ip:dst ~port:dst_port;
-        loop_read ~flow ~dst ~dst_port None >>= function
+        loop_read ~flow ~dst ~dst_port ~conn_id:None None >>= function
         | Ok () -> Lwt.return_unit
         | Error (`Msg err) ->
           O.error ~ip:dst ~port:dst_port ~err;

@@ -18,6 +18,8 @@ module Main
     (S : Tcpip.Stack.V4V6)
 = struct
 
+  (*Merlin-use line: notty.mirage notty lwt_react tcpip mirage-time mirage-console conntest*)
+  
   (*> goto choose output module via CLI*)
   (* module Ui = Conntest.Output.Log_stdout() *)
   module Ui = Conntest.Output.Notty_ui(Time)
@@ -209,6 +211,7 @@ module Main
     let term_size = 70, 11 in
     Lwt.async @@ render_ui ~console ~init_size:term_size;
     let name = Key_gen.name () in
+    Ui.set_name name;
     Lwt.async begin fun () -> 
       Key_gen.listen ()
       |> Lwt_list.iter_p (try_register_listener ~stack)

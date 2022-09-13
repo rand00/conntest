@@ -10,6 +10,8 @@ type connect_tcp_read_error = [
 
 module type S = sig
 
+  val set_name : string -> unit
+  
   module Listen : sig
 
     module Tcp : sig
@@ -65,6 +67,8 @@ end
 
 module Log_stdout () : S = struct
 
+  let set_name _ = ()
+  
   let src = Logs.Src.create "conntest" ~doc:"conntest events"
   module Log = (val Logs.src_log src : Logs.LOG)
 
@@ -245,6 +249,9 @@ module Notty_ui (Time : Mirage_time.S) = struct
   open T.Pier
   
   module Input_event : S = struct
+
+    let name_s, name_supd = S.create None
+    let set_name s = name_supd @@ Some s
 
     module Listen = struct
 
