@@ -2,7 +2,7 @@
  (name conntest)
  (public_name conntest)
 ;; (modules conntest output packet)
- (flags :standard -w -6-27-32-33-39)
+ (flags :standard -w -6-27-32-33-39-20)
  (libraries
   mirage-time
   mirage-runtime
@@ -19,6 +19,7 @@
   ;; decoders-jsonm
   ;; decoders-msgpck
   lwt_react
+  duration
   )
  (preprocess
   (pps

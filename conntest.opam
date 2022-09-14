@@ -28,6 +28,7 @@ depends: [
   "cstruct"
   "stringext"
   "lwt_react"
+  "duration"
 ]
 
 pin-depends: [

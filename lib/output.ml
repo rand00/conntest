@@ -227,39 +227,101 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
   let init () = Tick.loop_feed ()
 
-  module T = struct
+  (*goto move these types out to other file*)
 
-    module Connection = struct
+  module Conn_id = struct
 
-      type id = Uuidm.t
+    module T = struct
 
+      type t = string
+      
     end
+    include T
 
-    module Pier = struct
+    let compare = String.compare
+    
+  end
+  
+  module Pier = struct
 
+    module T = struct 
       type t = {
         ip : Ipaddr.t;
         port : int;
-        conn_id : string option;
+        conn_id : Conn_id.t option;
+      }
+    end
+    include T
+
+  end
+
+  module Connection = struct
+
+    module T = struct 
+
+      type id = Uuidm.t
+
+      type t = {
+        typ : [ `Client | `Server ];
+        pier : Pier.t;
+        pier_name : string option;
+        protocol : [ `Tcp | `Udp ];
+        start_time : unit; (*goto find out which time format makes sense with mirage*)
+        error : bool;
+        sent_packets : int;
+        received_packets : int;
+        retries : int option;
+        latency : Duration.t option;
+        bandwidth : float option; (*MB/sec*)
+        packet_size : int option; (*bytes*)
+        (* lost_packets : int option; *)
+        (* out_of_order_packets : int option; *)
       }
 
     end
+    include T
 
+    let make ~typ ~protocol ~start_time ~pier = {
+      typ;
+      protocol;
+      start_time;
+      pier;
+      error = false;
+      pier_name = None;
+      sent_packets = 0;
+      received_packets = 0;
+      retries = None;
+      latency = None;
+      bandwidth = None;
+      packet_size = None;
+    }
+    
   end
-  open T.Connection
-  open T.Pier
-  
-  module Input_event : S = struct
+  open Connection.T
+  open Pier.T
 
-    let name_s, name_supd = S.create None
+  (*goto maybe put S on via mli*)
+  module Input_event (* : S *) = struct
+
+    let (name_s : string option S.t), name_supd = S.create None
     let set_name s = name_supd @@ Some s
 
     module Listen = struct
 
       module Tcp = struct
 
-        let e, eupd = E.create ()
+        type event = [
+          | `New_connection of Pier.t
+          | `Closing_connection of Pier.t
+          | `Error of (Pier.t * string)
+          | `Packet of Pier.t
+        ]
+        
+        let (e : event E.t), eupd = E.create ()
 
+        (*goto this could get a temporary id passed
+          .. so id either is `Temp _ | `Clients _
+        *)
         let new_connection ~ip ~port =
           eupd @@ `New_connection {ip; port; conn_id = None}
 
@@ -267,7 +329,7 @@ module Notty_ui (Time : Mirage_time.S) = struct
           eupd @@ `Closing_connection {ip; port; conn_id}
 
         let error ~conn_id ~ip ~port ~err =
-          eupd @@ `Error ({ip; port; conn_id}, err)
+          eupd @@ `Error ({ip; port; conn_id}, (err : string))
 
         let registered_listener ~port = () 
 
@@ -293,7 +355,7 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
       module Tcp = struct
 
-        let e, eupd = E.create ()
+        (* let e, eupd = E.create () *)
 
         let connecting ~ip ~port =
           () (*goto*)
@@ -335,6 +397,79 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
   end
 
+  module Data = struct
+
+    module Conn_id_map = Map.Make(Conn_id)
+
+    let remove_oldest_unidentified_conn = failwith "todo"
+    let extract_and_update_oldest_conn = failwith "todo"
+    
+    let tcp_server_connections_e =
+      let typ = `Server in
+      let protocol = `Tcp in
+      let init =
+        let init_unidentified = [] in
+        let init_identified = Conn_id_map.empty in
+        init_unidentified, init_identified
+      in
+      Input_event.Listen.Tcp.e
+      |> E.fold (fun (acc_unidentified, acc_identified as acc) -> function
+        | `New_connection pier ->
+          let start_time = () in (*goto pass this via event*)
+          let conn = Connection.make ~typ ~protocol ~start_time ~pier in
+          conn :: acc_unidentified, acc_identified
+        | `Closing_connection pier ->
+          begin match pier.conn_id with
+            | None ->
+              let acc_unidentified =
+                remove_oldest_unidentified_conn
+                  ~ip:pier.ip
+                  ~port:pier.port
+                  acc_unidentified
+              in
+              acc_unidentified, acc_identified
+            | Some conn_id ->
+              let acc_identified =
+                Conn_id_map.remove conn_id acc_identified
+              in
+              acc_unidentified, acc_identified
+          end
+        | `Error (pier, _err) ->
+          begin match pier.conn_id with
+            | None -> acc (*< Don't know which one errored*)
+            | Some conn_id ->
+              let acc_identified = Conn_id_map.update conn_id (function
+                | None -> None
+                | Some conn -> Some { conn with error = true }
+              ) acc_identified
+              in
+              acc_unidentified, acc_identified
+          end
+        | `Packet pier ->
+          begin match pier.conn_id with
+            | None -> acc (*Shouldn't happen*)
+            | Some conn_id ->
+              begin match Conn_id_map.mem conn_id acc_identified with
+                | false -> 
+                  let identified, acc_unidentified =
+                    extract_and_update_oldest_conn
+                      ~ip:pier.ip
+                      ~port:pier.port
+                      ~conn_id
+                  in
+                  let acc_identified =
+                    Conn_id_map.add conn_id identified acc_identified
+                  in
+                  acc_unidentified, acc_identified
+                | true -> acc
+              end
+          end
+      ) init
+
+    let connections = failwith "todo"
+        
+  end
+  
   module Render = struct 
 
     open Notty 
