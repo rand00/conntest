@@ -209,6 +209,7 @@ module Main
   
   let start console _notty _time stack =
     let term_size = 70, 11 in
+    Ui.set_term_dimensions term_size;
     Lwt.async @@ render_ui ~console ~init_size:term_size;
     let name = Key_gen.name () in
     Ui.set_name name;

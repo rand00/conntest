@@ -11,6 +11,7 @@ type connect_tcp_read_error = [
 module type S = sig
 
   val set_name : string -> unit
+  val set_term_dimensions : (int * int) -> unit
   
   module Listen : sig
 
@@ -68,6 +69,7 @@ end
 module Log_stdout () : S = struct
 
   let set_name _ = ()
+  let set_term_dimensions _ = ()
   
   let src = Logs.Src.create "conntest" ~doc:"conntest events"
   module Log = (val Logs.src_log src : Logs.LOG)
@@ -229,6 +231,15 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
   (*goto move these types out to other file*)
 
+  module Tuple = struct
+
+    let mk2 v0 v1 = v0, v1
+    let mk3 v0 v1 v2 = v0, v1, v2
+    let mk4 v0 v1 v2 v3 = v0, v1, v2, v3
+    let mk5 v0 v1 v2 v3 v4 = v0, v1, v2, v3, v4
+
+  end
+  
   module Conn_id = struct
 
     module T = struct
@@ -242,6 +253,8 @@ module Notty_ui (Time : Mirage_time.S) = struct
     
   end
   
+  module Conn_id_map = Map.Make(Conn_id)
+
   module Pier = struct
 
     module T = struct 
@@ -310,6 +323,10 @@ module Notty_ui (Time : Mirage_time.S) = struct
     let (name_s : string option S.t), name_supd = S.create None
     let set_name s = name_supd @@ Some s
 
+    let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
+      S.create (70, 20)
+    let set_term_dimensions v = term_dimensions_supd
+    
     module Listen = struct
 
       module Tcp = struct
@@ -403,8 +420,6 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
   module Data = struct
 
-    module Conn_id_map = Map.Make(Conn_id)
-
     let tcp_server_connections_e =
       let typ = `Server in
       let protocol = `Tcp in
@@ -430,7 +445,10 @@ module Notty_ui (Time : Mirage_time.S) = struct
           ) acc
       ) Conn_id_map.empty
 
-    let connections = failwith "todo"
+    let tcp_server_connections_s =
+      S.hold Conn_id_map.empty tcp_server_connections_e
+
+    let connections_s = tcp_server_connections_s
         
   end
   
@@ -438,9 +456,48 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
     open Notty 
 
+    let render_connections (this_name, (term_w, term_h), conns) =
+      let conns = Conn_id_map.bindings conns in
+      let client_conns, server_conns =
+        List.partition (fun (_, conn) -> conn.typ = `Client) conns
+      in
+      let client_conn_is = failwith "todo" in
+      let server_conn_is = failwith "todo" in
+      let name_i =
+        this_name
+        |> Option.value ~default:"N/A"
+        |> I.string 
+        |> I.hsnap ~align:`Middle term_w in
+      let client_conns_name_i =
+        [
+          I.string (String.make term_w '-');
+          I.string "Client-connections" |> I.hsnap ~align:`Middle term_w;
+        ]
+        |> I.zcat
+      in
+      let server_conns_name_i =
+        [
+          I.string (String.make term_w '-');
+          I.string "Server-connections" |> I.hsnap ~align:`Middle term_w;
+        ]
+        |> I.zcat
+      in
+      [
+        [name_i];
+        [client_conns_name_i];
+        client_conn_is;
+        [server_conns_name_i];
+        server_conn_is;
+      ]
+      |> List.flatten
+      |> I.vcat 
+    
     let image_s =
-      I.string ~attr:A.(bg red) @@ Fmt.str "Not implemented"
-      |> S.const
+      S.l3 Tuple.mk3
+        Input_event.name_s
+        Input_event.term_dimensions_s
+        Data.connections_s
+      |> S.map render_connections
 
     let image_e =
       image_s |> S.sample (fun _ image -> image) Tick.e
