@@ -15,12 +15,12 @@ module type S = sig
   module Listen : sig
 
     module Tcp : sig
-      val new_connection : ip:Ipaddr.t -> port:int -> unit
-      val closing_connection : conn_id:string option -> ip:Ipaddr.t -> port:int -> unit
+      val new_connection : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
+      val closing_connection : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
       (*> goto all errors should be explicit, so user can get all the info wanted
         .. and notty interface needs error values instead of just a string 
       *)
-      val error : conn_id:string option -> ip:Ipaddr.t -> port:int -> err:string -> unit
+      val error : conn_id:string  -> ip:Ipaddr.t -> port:int -> err:string -> unit
       val registered_listener : port:int -> unit
       val packet : ip:Ipaddr.t -> port:int -> Packet.t -> unit
     end
@@ -81,7 +81,7 @@ module Log_stdout () : S = struct
 
     module Tcp = struct
       
-      let new_connection ~ip ~port =
+      let new_connection ~conn_id:_ ~ip ~port =
         Log.info (fun m ->
           m "new tcp connection from %s:%d"
             (Ipaddr.to_string ip) port)
@@ -245,11 +245,15 @@ module Notty_ui (Time : Mirage_time.S) = struct
   module Pier = struct
 
     module T = struct 
+
       type t = {
         ip : Ipaddr.t;
         port : int;
-        conn_id : Conn_id.t option;
+        conn_id : Conn_id.t;
+        (*< Note: this is the local id
+          - the conn-id sent via header is for sending back*)
       }
+      
     end
     include T
 
@@ -322,8 +326,8 @@ module Notty_ui (Time : Mirage_time.S) = struct
         (*goto this could get a temporary id passed
           .. so id either is `Temp _ | `Clients _
         *)
-        let new_connection ~ip ~port =
-          eupd @@ `New_connection {ip; port; conn_id = None}
+        let new_connection ~conn_id ~ip ~port =
+          eupd @@ `New_connection {ip; port; conn_id}
 
         let closing_connection ~conn_id ~ip ~port =
           eupd @@ `Closing_connection {ip; port; conn_id}
@@ -333,8 +337,8 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
         let registered_listener ~port = () 
 
-        let packet ~ip ~port packet =
-          let conn_id = Some packet.Packet.T.header.connection_id in
+        (*> Note: there is also a remote conn-id in header*)
+        let packet ~conn_id ~ip ~port packet =
           eupd @@ `Packet {ip; port; conn_id}
 
       end
@@ -401,70 +405,30 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
     module Conn_id_map = Map.Make(Conn_id)
 
-    let remove_oldest_unidentified_conn = failwith "todo"
-    let extract_and_update_oldest_conn = failwith "todo"
-    
     let tcp_server_connections_e =
       let typ = `Server in
       let protocol = `Tcp in
-      let init =
-        let init_unidentified = [] in
-        let init_identified = Conn_id_map.empty in
-        init_unidentified, init_identified
-      in
       Input_event.Listen.Tcp.e
-      |> E.fold (fun (acc_unidentified, acc_identified as acc) -> function
+      |> E.fold (fun acc -> function
         | `New_connection pier ->
           let start_time = () in (*goto pass this via event*)
           let conn = Connection.make ~typ ~protocol ~start_time ~pier in
-          conn :: acc_unidentified, acc_identified
+          acc |> Conn_id_map.add pier.conn_id conn
         | `Closing_connection pier ->
-          begin match pier.conn_id with
-            | None ->
-              let acc_unidentified =
-                remove_oldest_unidentified_conn
-                  ~ip:pier.ip
-                  ~port:pier.port
-                  acc_unidentified
-              in
-              acc_unidentified, acc_identified
-            | Some conn_id ->
-              let acc_identified =
-                Conn_id_map.remove conn_id acc_identified
-              in
-              acc_unidentified, acc_identified
-          end
+          Conn_id_map.remove pier.conn_id acc
         | `Error (pier, _err) ->
-          begin match pier.conn_id with
-            | None -> acc (*< Don't know which one errored*)
-            | Some conn_id ->
-              let acc_identified = Conn_id_map.update conn_id (function
-                | None -> None
-                | Some conn -> Some { conn with error = true }
-              ) acc_identified
-              in
-              acc_unidentified, acc_identified
-          end
+          Conn_id_map.update pier.conn_id (function
+            | None -> None
+            | Some conn -> Some { conn with error = true }
+          ) acc
         | `Packet pier ->
-          begin match pier.conn_id with
-            | None -> acc (*Shouldn't happen*)
-            | Some conn_id ->
-              begin match Conn_id_map.mem conn_id acc_identified with
-                | false -> 
-                  let identified, acc_unidentified =
-                    extract_and_update_oldest_conn
-                      ~ip:pier.ip
-                      ~port:pier.port
-                      ~conn_id
-                  in
-                  let acc_identified =
-                    Conn_id_map.add conn_id identified acc_identified
-                  in
-                  acc_unidentified, acc_identified
-                | true -> acc
-              end
-          end
-      ) init
+          Conn_id_map.update pier.conn_id (function
+            | None -> None (*shouldn't happen*)
+            | Some conn ->
+              let received_packets = succ conn.received_packets in
+              Some { conn with received_packets }
+          ) acc
+      ) Conn_id_map.empty
 
     let connections = failwith "todo"
         

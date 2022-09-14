@@ -19,23 +19,19 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           S.TCP.close flow >|= fun () -> Ok ()
         | Error e ->
           let msg = Fmt.str "%a" S.TCP.pp_error e in
-          Lwt_result.fail (`Msg msg, conn_id)
+          Lwt_result.fail @@ `Msg msg
         | Ok (`Data data) ->
           read_and_respond ~flow ~dst ~dst_port ~data ~conn_id ~unfinished_packet
       and read_and_respond ~flow ~dst ~dst_port ~data ~conn_id ~unfinished_packet =
-        let* unfinished =
-          begin match unfinished_packet with
-            | None -> Packet.Tcp.init data |> Lwt.return
-            | Some unfinished ->
-              Packet.Tcp.append ~data unfinished |> Lwt.return
-          end
-          |> Lwt_result.map_error (fun e -> e, conn_id)
+        let* unfinished = match unfinished_packet with
+          | None -> Packet.Tcp.init data |> Lwt.return
+          | Some unfinished ->
+            Packet.Tcp.append ~data unfinished |> Lwt.return
         in
         begin match unfinished with
           | `Unfinished packet ->
             loop_read ~flow ~dst ~dst_port ~conn_id @@ Some packet
           | `Done (packet, more_data) ->
-            let conn_id = Some packet.Packet.T.header.connection_id in
             O.packet ~ip:dst ~port:dst_port packet;
             let response_packet =
               Packet.T.{ packet with data = "" }
@@ -55,17 +51,18 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
                 end
               | Error err ->
                 let msg = Fmt.str "%a" S.TCP.pp_write_error err in
-                Lwt_result.fail (`Msg msg, conn_id)
+                Lwt_result.fail @@ `Msg msg
             end
         end
       in
       let callback flow =
         Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
         let dst, dst_port = S.TCP.dst flow in
-        O.new_connection ~ip:dst ~port:dst_port;
-        loop_read ~flow ~dst ~dst_port ~conn_id:None None >>= function
+        let conn_id = Uuidm.(v `V4 |> to_string) in
+        O.new_connection ~conn_id ~ip:dst ~port:dst_port;
+        loop_read ~flow ~dst ~dst_port ~conn_id None >>= function
         | Ok () -> Lwt.return_unit
-        | Error (`Msg err, conn_id) ->
+        | Error `Msg err ->
           O.error ~conn_id ~ip:dst ~port:dst_port ~err;
           O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
           S.TCP.close flow 
