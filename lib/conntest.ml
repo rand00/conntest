@@ -166,7 +166,9 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
             loop_read_returning flow >>= function
             | Ok _response -> (*goto use response for stats*)
               Time.sleep_ns @@ sec sleep_secs >>= fun () ->
-              loop_write ~index:(succ index) ~connection_id flow
+              (*> goto remove DEBUG *)
+              S.TCP.close flow >>= fun () -> Lwt_result.return ()
+              (* loop_write ~index:(succ index) ~connection_id flow *)
             | Error err ->
               O.error_reading ~ip ~port ~err;
               O.closing_flow ~ip ~port;
