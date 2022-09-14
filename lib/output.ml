@@ -458,16 +458,22 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
     let render_conn (_id, conn) =
       let sep_i = I.(string "|" <-> string "|") in
-      let protocol_i =
-        let title = I.string "prot" in
-        let data = I.string @@ match conn.protocol with
-        | `Tcp -> "TCP"
-        | `Udp -> "UDP"
-        in
-        I.(sep_i <|> (title <-> data) <|> sep_i)
+      let make_column title data_i =
+        let title_i = I.string title in
+        I.(sep_i <|> (title_i <-> data_i) <|> sep_i)
+      in
+      let protocol_i = make_column "prot" @@ match conn.protocol with
+      | `Tcp -> I.string "TCP"
+      | `Udp -> I.string "UDP"
+      and sent_packages_i =
+        make_column "#sent" @@ I.strf "%d" conn.sent_packets
+      and recv_packages_i =
+        make_column "#recv" @@ I.strf "%d" conn.received_packets
       in
       [
         protocol_i;
+        sent_packages_i;
+        recv_packages_i;
       ]
       |> I.hcat 
     
@@ -497,11 +503,15 @@ module Notty_ui (Time : Mirage_time.S) = struct
         ]
         |> I.zcat
       in
+      let filter_and_pad_title name_i = function
+        | [] -> []
+        | _ -> [ I.empty; name_i ]
+      in
       [
         [name_i];
-        (match client_conn_images with [] -> [] | _ -> [client_conns_name_i]);
+        filter_and_pad_title client_conns_name_i client_conn_images;
         client_conn_images;
-        (match server_conn_images with [] -> [] | _ -> [server_conns_name_i]);
+        filter_and_pad_title server_conns_name_i server_conn_images;
         server_conn_images;
       ]
       |> List.flatten
