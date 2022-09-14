@@ -460,7 +460,7 @@ module Notty_ui (Time : Mirage_time.S) = struct
       let sep_i = I.(string "|" <-> string "|") in
       let make_column title data_i =
         let title_i = I.string title in
-        I.(sep_i <|> (title_i <-> data_i) <|> sep_i)
+        I.(sep_i <|> (title_i <-> data_i))
       in
       let protocol_i = make_column "prot" @@ match conn.protocol with
       | `Tcp -> I.string "TCP"
