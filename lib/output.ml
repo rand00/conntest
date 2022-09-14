@@ -23,7 +23,7 @@ module type S = sig
       *)
       val error : conn_id:string  -> ip:Ipaddr.t -> port:int -> err:string -> unit
       val registered_listener : port:int -> unit
-      val packet : ip:Ipaddr.t -> port:int -> Packet.t -> unit
+      val packet : conn_id:string -> ip:Ipaddr.t -> port:int -> Packet.t -> unit
     end
 
     module Udp : sig
@@ -102,7 +102,7 @@ module Log_stdout () : S = struct
       let registered_listener ~port =
         Log.info (fun f -> f "registered tcp listener on port %d" port)
 
-      let packet ~ip ~port packet =
+      let packet ~conn_id:_ ~ip ~port packet =
         let open Packet.T in
         Log.info (fun f ->
           f "got packet from %s:%d:\n---- header:\n%s\n---- data:\n%s"
@@ -325,7 +325,7 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
     let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
       S.create (70, 20)
-    let set_term_dimensions v = term_dimensions_supd
+    let set_term_dimensions v = term_dimensions_supd v
     
     module Listen = struct
 

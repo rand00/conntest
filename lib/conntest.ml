@@ -32,7 +32,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           | `Unfinished packet ->
             loop_read ~flow ~dst ~dst_port ~conn_id @@ Some packet
           | `Done (packet, more_data) ->
-            O.packet ~ip:dst ~port:dst_port packet;
+            O.packet ~conn_id ~ip:dst ~port:dst_port packet;
             let response_packet =
               Packet.T.{ packet with data = "" }
               |> Packet.to_string
