@@ -15,6 +15,7 @@ module Main
     (C : Mirage_console.S)
     (Notty_term : Notty_mirage.TERM)
     (Time : Mirage_time.S)
+    (Clock : Mirage_clock.MCLOCK)
     (S : Tcpip.Stack.V4V6)
 = struct
 
@@ -207,7 +208,7 @@ module Main
         Ui.init ()
       end
   
-  let start console _notty _time stack =
+  let start console _notty _time _clock stack =
     let term_size = 70, 11 in
     Ui.Input_event.set_term_dimensions term_size;
     Lwt.async @@ render_ui ~console ~init_size:term_size;

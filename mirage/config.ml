@@ -78,6 +78,8 @@ module Notty_dev = struct
   let term_link =
     let packages = [
       package "mirage-console";
+      package "mirage-clock";
+      package "mirage-time";
       package "notty" ~sublibs:["mirage"]
     ] in
     impl ~packages "Notty_mirage.Terminal_link_of_console" (
@@ -100,11 +102,12 @@ module Notty_dev = struct
 end
 
 let main = main ~keys ~packages "Unikernel.Main"
-    (console @-> Notty_dev.typ @-> time @-> stackv4v6 @-> job)
+    (console @-> Notty_dev.typ @-> time @-> mclock @-> stackv4v6 @-> job)
 
 let console = default_console
 let time = default_time
+let clock = default_monotonic_clock
 let stack = generic_stackv4v6 default_network
 
 let () = register "conntest"
-    [ main $ console $ (Notty_dev.impl console) $ time $ stack ]
+    [ main $ console $ (Notty_dev.impl console) $ time $ clock $ stack ]
