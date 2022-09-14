@@ -211,7 +211,7 @@ module Main
   let start console _notty _time _clock stack =
     let term_size = 70, 11 in
     Ui.Input_event.set_term_dimensions term_size;
-    Lwt.async @@ render_ui ~console ~init_size:term_size;
+    (* Lwt.async @@ render_ui ~console ~init_size:term_size; *)
     let name = Key_gen.name () in
     Ui.Input_event.set_name name;
     Lwt.async begin fun () -> 

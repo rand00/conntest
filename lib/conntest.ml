@@ -75,22 +75,22 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
         let dst, dst_port = S.TCP.dst flow in
         let conn_id = Uuidm.(v `V4 |> to_string) in
         O.new_connection ~conn_id ~ip:dst ~port:dst_port;
-        Lwt.catch
-          (fun () -> 
+        (* Lwt.catch
+         *   (fun () ->  *)
               loop_read ~flow ~dst ~dst_port ~conn_id None >>= function
               | Ok () -> Lwt.return_unit
               | Error `Msg err ->
                 O.error ~conn_id ~ip:dst ~port:dst_port ~err;
                 O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
                 S.TCP.close flow
-          )
-          (function
-            | Lwt.Canceled ->
-              O.error ~conn_id ~ip:dst ~port:dst_port ~err:"Canceled";
-              O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
-              S.TCP.close flow
-            | exn -> raise exn
-          )
+          (* ) *)
+          (* (function
+           *   | Lwt.Canceled ->
+           *     O.error ~conn_id ~ip:dst ~port:dst_port ~err:"Canceled";
+           *     O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
+           *     S.TCP.close flow
+           *   | exn -> raise exn
+           * ) *)
       in
       Mirage_runtime.at_exit (fun () ->
         S.TCP.unlisten (S.tcp stack) ~port |> Lwt.return
