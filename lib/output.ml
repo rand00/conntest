@@ -485,23 +485,23 @@ module Notty_ui (Time : Mirage_time.S) = struct
         |> I.hsnap ~align:`Middle term_w in
       let client_conns_name_i =
         [
-          I.string (String.make term_w '-');
           I.string "Client-connections" |> I.hsnap ~align:`Middle term_w;
+          I.string (String.make term_w '-');
         ]
         |> I.zcat
       in
       let server_conns_name_i =
         [
-          I.string (String.make term_w '-');
           I.string "Server-connections" |> I.hsnap ~align:`Middle term_w;
+          I.string (String.make term_w '-');
         ]
         |> I.zcat
       in
       [
         [name_i];
-        [client_conns_name_i];
+        (match client_conn_images with [] -> [] | _ -> [client_conns_name_i]);
         client_conn_images;
-        [server_conns_name_i];
+        (match server_conn_images with [] -> [] | _ -> [server_conns_name_i]);
         server_conn_images;
       ]
       |> List.flatten
