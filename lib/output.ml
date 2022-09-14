@@ -456,13 +456,28 @@ module Notty_ui (Time : Mirage_time.S) = struct
 
     open Notty 
 
+    let render_conn (_id, conn) =
+      let sep_i = I.(string "|" <-> string "|") in
+      let protocol_i =
+        let title = I.string "prot" in
+        let data = I.string @@ match conn.protocol with
+        | `Tcp -> "TCP"
+        | `Udp -> "UDP"
+        in
+        I.(sep_i <|> (title <-> data) <|> sep_i)
+      in
+      [
+        protocol_i;
+      ]
+      |> I.hcat 
+    
     let render_connections (this_name, (term_w, term_h), conns) =
       let conns = Conn_id_map.bindings conns in
       let client_conns, server_conns =
         List.partition (fun (_, conn) -> conn.typ = `Client) conns
       in
-      let client_conn_is = failwith "todo" in
-      let server_conn_is = failwith "todo" in
+      let client_conn_images = client_conns |> List.map render_conn in
+      let server_conn_images = server_conns |> List.map render_conn in
       let name_i =
         this_name
         |> Option.value ~default:"N/A"
@@ -485,9 +500,9 @@ module Notty_ui (Time : Mirage_time.S) = struct
       [
         [name_i];
         [client_conns_name_i];
-        client_conn_is;
+        client_conn_images;
         [server_conns_name_i];
-        server_conn_is;
+        server_conn_images;
       ]
       |> List.flatten
       |> I.vcat 
