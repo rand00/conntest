@@ -42,7 +42,17 @@ module type S = sig
 
 end
 
-module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
+module type STACK_V= sig
+  type t 
+  val stack : t
+end
+
+module Make
+    (Time : Mirage_time.S)
+    (S : Tcpip.Stack.V4V6)
+    (Sv : STACK_V with type t = S.t)
+    (O : Output.S)
+= struct
 
   type stack = S.t
   type udp_error = S.UDP.error

@@ -21,7 +21,8 @@ module Main
 
   (*Merlin-use line: notty.mirage notty lwt_react tcpip mirage-time mirage-console conntest*)
   
-  let try_register_listener ~stack input =
+  let try_register_listener ~stack ~ct_m input =
+    let module Ct = (val ct_m : Conntest.S) in
     begin match input with
       | "tcp" :: port :: [] ->
         begin match int_of_string_opt port with
@@ -91,7 +92,8 @@ module Main
       | option -> Ok (acc_v, option :: acc_options)
     ) (Ok (default, []))
 
-  let try_initiate_connection ~stack ~name uri_str =
+  let try_initiate_connection ~stack ~ct_m ~name uri_str =
+    let module Ct = (val ct_m : Conntest.S) in
     begin
       let uri = Uri.of_string uri_str in
       let* protocol =
@@ -217,16 +219,18 @@ module Main
         (module Ui.Input_event : Conntest.Output.S)
     in
     let module Ui = (val ui_m) in
-    let module Ct = Conntest.Make(Time)(S)(Ui) in
+    let module Stack_v = struct let stack = stack end in
+    let module Ct = Conntest.Make(Time)(S)(Stack_v)(Ui)
+    in
     let ct_m = (module Ct : Conntest.S)
     in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
-      |> Lwt_list.iter_p (try_register_listener ~stack)
+      |> Lwt_list.iter_p (try_register_listener ~stack ~ct_m)
     end;
     Lwt.async begin fun () -> 
       Key_gen.connect ()
-      |> Lwt_list.iter_p (try_initiate_connection ~stack ~name)
+      |> Lwt_list.iter_p (try_initiate_connection ~stack ~ct_m ~name)
     end;
     S.listen stack
 
