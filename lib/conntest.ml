@@ -7,8 +7,46 @@ let (let+) x f = Result.map f x
 
 let ns_of_sec n = Int64.of_float (1e9 *. n)
 
+
+module type S = sig
+
+  type stack
+  type udp_error
+  
+  module Listen : sig
+
+    val tcp : stack -> int -> unit
+    val udp : stack -> int -> unit
+
+  end
+
+  module Connect : sig
+
+    val tcp :
+      stack:stack ->
+      name:string ->
+      port:int ->
+      ip:Ipaddr.t ->
+      monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
+      'a Lwt.t
+
+    val udp :
+      stack:stack ->
+      name:string ->
+      port:int ->
+      ip:Ipaddr.t ->
+      monitor_bandwidth:'a ->
+      (unit, [> `Udp of udp_error ]) Lwt_result.t
+
+  end
+
+end
+
 module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struct
 
+  type stack = S.t
+  type udp_error = S.UDP.error
+  
   module Listen = struct
 
     let tcp stack port =

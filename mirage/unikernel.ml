@@ -21,12 +21,6 @@ module Main
 
   (*Merlin-use line: notty.mirage notty lwt_react tcpip mirage-time mirage-console conntest*)
   
-  (*> goto choose output module via CLI*)
-  (* module Ui = Conntest.Output.Log_stdout() *)
-  module Ui = Conntest.Output.Notty_ui(Time)
-
-  module Ct = Conntest.Make(Time)(S)(Ui.Input_event)
-  
   let try_register_listener ~stack input =
     begin match input with
       | "tcp" :: port :: [] ->
@@ -209,11 +203,23 @@ module Main
       end
   
   let start console _notty _time _clock stack =
+    (*> goto implement key*)
     let term_size = 70, 11 in
-    Ui.Input_event.set_term_dimensions term_size;
-    (* Lwt.async @@ render_ui ~console ~init_size:term_size; *)
     let name = Key_gen.name () in
-    Ui.Input_event.set_name name;
+    let ui_key = `Log in
+    let ui_m = match ui_key with
+      | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
+      | `Notty -> 
+        let module Ui = Conntest.Output.Notty_ui(Time) in
+        Ui.Input_event.set_name name;
+        Ui.Input_event.set_term_dimensions term_size;
+        Lwt.async @@ render_ui ~console ~init_size:term_size;
+        (module Ui.Input_event : Conntest.Output.S)
+    in
+    let module Ui = (val ui_m) in
+    let module Ct = Conntest.Make(Time)(S)(Ui) in
+    let ct_m = (module Ct : Conntest.S)
+    in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
       |> Lwt_list.iter_p (try_register_listener ~stack)
