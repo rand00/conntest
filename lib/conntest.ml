@@ -23,7 +23,7 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
           let msg = Fmt.str "%a" S.TCP.pp_error e in
           Lwt_result.fail @@ `Msg msg
         | Ok (`Data data) ->
-          let follow_up_t =
+          let looping_action_t =
             read_and_respond
               ~flow
               ~dst
@@ -32,13 +32,15 @@ module Make (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) (O : Output.S) = struc
               ~conn_id
               ~unfinished_packet
           in
-          (* let timeout_t =
-           *   Time.sleep_ns @@ ns_of_sec 10. >>= fun () ->
-           *   Lwt_result.fail @@ `Msg "Timeout"
-           * in *)
-          (* Lwt.pick [ follow_up_t; timeout_t ] *)
-          follow_up_t
-      and read_and_respond ~flow ~dst ~dst_port ~data ~conn_id ~unfinished_packet =
+          Lwt.async (fun () ->
+            Time.sleep_ns @@ ns_of_sec 2. >>= fun () ->
+            Lwt.cancel looping_action_t
+            |> Lwt.return
+          );
+          looping_action_t
+      and read_and_respond ~flow ~dst ~dst_port ~data ~conn_id
+          ~unfinished_packet
+        =
         let* unfinished = match unfinished_packet with
           | None -> Packet.Tcp.init data |> Lwt.return
           | Some unfinished ->
