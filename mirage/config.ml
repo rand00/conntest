@@ -1,5 +1,31 @@
 open Mirage
 
+let ui =
+  let long_name = "ui" in
+  let doc =
+    Key.Arg.info
+      ~docv:"<UI>"
+      ~doc:"Choose which UI backend to use - currently options are 'notty' \
+            and 'log'."
+      [ long_name ]
+  in
+  let ui_conv =
+    let parse = function
+      | "notty" -> Ok `Notty
+      | "log" -> Ok `Log
+      | s -> Error (`Msg (Fmt.str "Unknown UI backend '%s'" s))
+    in
+    let serialize fmt v =
+      Fmt.pf fmt "%s" @@ match v with
+      | `Notty -> "notty"
+      | `Log -> "log"
+    in
+    let conv = Cmdliner.Arg.conv (parse, serialize) in
+    let runtime_conv = Fmt.str "(Cmdliner.Arg.(list ~sep:'%c' string))" sep in
+    Key.Arg.conv ~conv ~runtime_conv ~serialize
+  in
+  Key.(create long_name Arg.(opt ~stage:`Run ui_conv `Notty doc))
+
 let name =
   let long_name = "name" in
   let doc =
@@ -49,6 +75,7 @@ let connections =
 
 let keys = [
   key name;
+  key ui;
   key listens;
   key connections;
 ]

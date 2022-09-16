@@ -197,7 +197,7 @@ module Main
     let term_size = 70, 11 in
     let name = Key_gen.name () in
     (*> goto implement key*)
-    let ui_key = `Log in
+    let ui_key = `Notty in
     let ui_m = match ui_key with
       | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
       | `Notty -> 
