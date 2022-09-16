@@ -170,7 +170,9 @@ module Main
     | Error (`Msg msg) ->
       (*> goto pass to Ui instead*)
       Logs.err (fun m -> m "Error: try_initiate_connection: %s" msg);
-      exit 1
+      (*> goto it should be ensured that all errors exiting like this is
+          caused by parsing of CLI args*)
+      exit 64
 
   let render_ui ~init ~image_e ~console ~init_size () =
     let open Lwt.Infix in
@@ -197,7 +199,13 @@ module Main
     let term_size = 70, 11 in
     let name = Key_gen.name () in
     (*> goto implement key*)
-    let ui_key = `Notty in
+    let ui_key = match Key_gen.ui () with
+      | "notty" -> `Notty
+      | "log" -> `Log
+      | ui_str ->
+        Logs.err (fun m -> m "Unknown UI '%s'" ui_str);
+        exit 64
+    in
     let ui_m = match ui_key with
       | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
       | `Notty -> 

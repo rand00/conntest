@@ -6,25 +6,10 @@ let ui =
     Key.Arg.info
       ~docv:"<UI>"
       ~doc:"Choose which UI backend to use - currently options are 'notty' \
-            and 'log'."
+            and 'log'. Defaults to 'notty'."
       [ long_name ]
   in
-  let ui_conv =
-    let parse = function
-      | "notty" -> Ok `Notty
-      | "log" -> Ok `Log
-      | s -> Error (`Msg (Fmt.str "Unknown UI backend '%s'" s))
-    in
-    let serialize fmt v =
-      Fmt.pf fmt "%s" @@ match v with
-      | `Notty -> "notty"
-      | `Log -> "log"
-    in
-    let conv = Cmdliner.Arg.conv (parse, serialize) in
-    let runtime_conv = Fmt.str "(Cmdliner.Arg.(list ~sep:'%c' string))" sep in
-    Key.Arg.conv ~conv ~runtime_conv ~serialize
-  in
-  Key.(create long_name Arg.(opt ~stage:`Run ui_conv `Notty doc))
+  Key.(create long_name Arg.(opt ~stage:`Run string "notty" doc))
 
 let name =
   let long_name = "name" in
