@@ -15,15 +15,14 @@ module type S = sig
   
   module Listen : sig
 
-    val tcp : stack -> int -> unit
-    val udp : stack -> int -> unit
+    val tcp : int (*port*) -> unit
+    val udp : int (*port*) -> unit
 
   end
 
   module Connect : sig
 
     val tcp :
-      stack:stack ->
       name:string ->
       port:int ->
       ip:Ipaddr.t ->
@@ -31,7 +30,6 @@ module type S = sig
       'a Lwt.t
 
     val udp :
-      stack:stack ->
       name:string ->
       port:int ->
       ip:Ipaddr.t ->
@@ -42,7 +40,7 @@ module type S = sig
 
 end
 
-module type STACK_V= sig
+module type STACK_V = sig
   type t 
   val stack : t
 end
@@ -59,7 +57,7 @@ module Make
   
   module Listen = struct
 
-    let tcp stack port =
+    let tcp port =
       let module O = O.Listen.Tcp in
       let open Lwt_result.Syntax in
       let rec loop_read ~flow ~dst ~dst_port ~conn_id unfinished_packet =
@@ -146,21 +144,21 @@ module Make
           )
       in
       Mirage_runtime.at_exit (fun () ->
-        S.TCP.unlisten (S.tcp stack) ~port |> Lwt.return
+        S.TCP.unlisten (S.tcp Sv.stack) ~port |> Lwt.return
       );
-      S.TCP.listen (S.tcp stack) ~port callback;
+      S.TCP.listen (S.tcp Sv.stack) ~port callback;
       O.registered_listener ~port
 
-    let udp stack port =
+    let udp port =
       let module O = O.Listen.Udp in
       let callback ~src:_ ~dst ~src_port:_ data =
         O.data ~ip:dst ~port ~data;
         Lwt.return_unit
       in
       Mirage_runtime.at_exit (fun () ->
-        S.UDP.unlisten (S.udp stack) ~port |> Lwt.return
+        S.UDP.unlisten (S.udp Sv.stack) ~port |> Lwt.return
       );
-      S.UDP.listen (S.udp stack) ~port callback;
+      S.UDP.listen (S.udp Sv.stack) ~port callback;
       O.registered_listener ~port
 
   end
@@ -174,7 +172,7 @@ module Make
       * check latency
       * optionally monitor bandwidth
     *)
-    let tcp ~stack ~name ~port ~ip ~monitor_bandwidth =
+    let tcp ~name ~port ~ip ~monitor_bandwidth =
       let module O = O.Connect.Tcp in
       let bandwidth_testdata_str = String.make monitor_bandwidth#packet_size '%' in
       let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str
@@ -182,7 +180,7 @@ module Make
       let rec loop_try_connect () =
         let connection_id = Uuidm.(v `V4 |> to_string) in
         O.connecting ~ip ~port;
-        S.TCP.create_connection (S.tcp stack) (ip, port)
+        S.TCP.create_connection (S.tcp Sv.stack) (ip, port)
         >>= function
         | Error err ->
           let err = Fmt.str "%a" S.TCP.pp_error err in
@@ -276,12 +274,12 @@ module Make
       * the listener should send a packet back with same index (right away)
         * so this conntest can check what (roundtrip) latency was of that packet-index
     *)
-    let udp ~stack ~name ~port ~ip ~monitor_bandwidth =
+    let udp ~name ~port ~ip ~monitor_bandwidth =
       let module O = O.Connect.Udp in
       let data_str = "I'm "^name in
       let data = Cstruct.of_string data_str in
       O.writing ~ip ~port ~data:data_str;
-      S.UDP.write ~dst:ip ~dst_port:port (S.udp stack) data
+      S.UDP.write ~dst:ip ~dst_port:port (S.udp Sv.stack) data
       |> Lwt_result.map_error (fun err -> `Udp err)
 
   end

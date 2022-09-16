@@ -26,7 +26,7 @@ module Main
     begin match input with
       | "tcp" :: port :: [] ->
         begin match int_of_string_opt port with
-          | Some port -> Ct.Listen.tcp stack port |> Result.ok
+          | Some port -> Ct.Listen.tcp port |> Result.ok
           | None ->
             let msg =
               Fmt.str "try_register_listener: Port '%s' is malformed" port
@@ -35,7 +35,7 @@ module Main
         end
       | "udp" :: port :: [] ->
         begin match int_of_string_opt port with
-          | Some port -> Ct.Listen.udp stack port |> Result.ok
+          | Some port -> Ct.Listen.udp port |> Result.ok
           | None ->
             let msg =
               Fmt.str "try_register_listener: Port '%s' is malformed" port
@@ -158,8 +158,8 @@ module Main
       end
       in
       match protocol with
-      | `Tcp -> Ct.Connect.tcp ~stack ~name ~port ~ip ~monitor_bandwidth
-      | `Udp -> Ct.Connect.udp ~stack ~name ~port ~ip ~monitor_bandwidth
+      | `Tcp -> Ct.Connect.tcp ~name ~port ~ip ~monitor_bandwidth
+      | `Udp -> Ct.Connect.udp ~name ~port ~ip ~monitor_bandwidth
     end
     |> lwt_result_flatten_result >>= function
     | Ok () -> Lwt.return_unit
@@ -200,6 +200,7 @@ module Main
           Notty_term.write term @@ `Image image >|= function
           | Ok () -> ()
           | Error _ -> Logs.err (fun m -> m "ERROR: render notty ui")
+          (*< goto should always handle errors via Ui module*)
         ) |> Lwt_react.E.keep;
         Ui.init ()
       end
