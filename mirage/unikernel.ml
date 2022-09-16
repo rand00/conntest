@@ -25,7 +25,7 @@ module Main
 
   (*Merlin-use line: notty.mirage notty lwt_react tcpip mirage-time mirage-console conntest*)
   
-  let try_register_listener ~stack ~ct_m input =
+  let try_register_listener ~ct_m input =
     let module Ct = (val ct_m : Conntest.S) in
     begin match input with
       | "tcp" :: port :: [] ->
@@ -96,7 +96,7 @@ module Main
       | option -> Ok (acc_v, option :: acc_options)
     ) (Ok (default, []))
 
-  let try_initiate_connection ~stack ~ct_m ~name uri_str =
+  let try_initiate_connection ~ct_m ~name uri_str =
     let module Ct = (val ct_m : Conntest.S) in
     begin
       let uri = Uri.of_string uri_str in
@@ -229,11 +229,11 @@ module Main
     in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
-      |> Lwt_list.iter_p (try_register_listener ~stack ~ct_m)
+      |> Lwt_list.iter_p (try_register_listener ~ct_m)
     end;
     Lwt.async begin fun () -> 
       Key_gen.connect ()
-      |> Lwt_list.iter_p (try_initiate_connection ~stack ~ct_m ~name)
+      |> Lwt_list.iter_p (try_initiate_connection ~ct_m ~name)
     end;
     S.listen stack
 
