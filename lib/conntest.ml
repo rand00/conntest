@@ -60,7 +60,8 @@ module Make
     let tcp port =
       let module O = O.Listen.Tcp in
       let open Lwt_result.Syntax in
-      let rec loop_read ~flow ~dst ~dst_port ~conn_id unfinished_packet =
+      let rec loop_read ~flow ~dst ~dst_port ~conn_id ~made_progress_mvar
+          ~unfinished_packet =
         S.TCP.read flow >>= function
         | Ok `Eof ->
           O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
@@ -69,6 +70,8 @@ module Make
           let msg = Fmt.str "%a" S.TCP.pp_error e in
           Lwt_result.fail @@ `Msg msg
         | Ok (`Data data) ->
+          Lwt_mvar.put made_progress_mvar () >>= fun () ->
+          let made_progress_mvar = Lwt_mvar.create_empty () in
           let looping_action_t =
             read_and_respond
               ~flow
@@ -77,17 +80,27 @@ module Make
               ~data
               ~conn_id
               ~unfinished_packet
+              ~made_progress_mvar
           in
-          (*> goto implementing timeout somehow like this would work*)
-          (* Lwt.async (fun () ->
-           *   Time.sleep_ns @@ ns_of_sec 2. >>= fun () ->
-           *   if 
-           *   Lwt.cancel looping_action_t
-           *   |> Lwt.return
-           * ); *)
+          Lwt.async (fun () ->
+            Lwt.pick [
+              (*> goto pass this timeout via cli?*)
+              (Time.sleep_ns @@ ns_of_sec 2. >|= fun () -> `Timeout);
+              (Lwt_mvar.take made_progress_mvar >|= fun () -> `Progress);
+            ]
+            >|= function
+            | `Timeout -> Lwt.cancel looping_action_t 
+            | `Progress -> ()
+          );
           looping_action_t
-      and read_and_respond ~flow ~dst ~dst_port ~data ~conn_id
+      and read_and_respond
+          ~flow
+          ~dst
+          ~dst_port
+          ~data
+          ~conn_id
           ~unfinished_packet
+          ~made_progress_mvar
         =
         let* unfinished = match unfinished_packet with
           | None -> Packet.Tcp.init data |> Lwt.return
@@ -96,7 +109,14 @@ module Make
         in
         begin match unfinished with
           | `Unfinished packet ->
-            loop_read ~flow ~dst ~dst_port ~conn_id @@ Some packet
+            let unfinished_packet = Some packet in
+            loop_read
+              ~flow
+              ~dst
+              ~dst_port
+              ~conn_id
+              ~unfinished_packet
+              ~made_progress_mvar
           | `Done (packet, more_data) ->
             O.packet ~conn_id ~ip:dst ~port:dst_port packet;
             let response_packet =
@@ -110,10 +130,14 @@ module Make
                 (*> goto add this (naming?)*)
                 (* O.responded_to_packet ~ip ~port; *)
                 begin match more_data with
-                  | None -> loop_read ~flow ~dst ~dst_port ~conn_id None
+                  | None ->
+                    loop_read ~flow ~dst ~dst_port ~conn_id
+                      ~unfinished_packet:None
+                      ~made_progress_mvar
                   | Some data ->
                     read_and_respond ~flow ~dst ~dst_port ~data ~conn_id
                       ~unfinished_packet
+                      ~made_progress_mvar
                 end
               | Error err ->
                 let msg = Fmt.str "%a" S.TCP.pp_write_error err in
@@ -128,12 +152,16 @@ module Make
         O.new_connection ~conn_id ~ip:dst ~port:dst_port;
         Lwt.catch
           (fun () ->
-              loop_read ~flow ~dst ~dst_port ~conn_id None >>= function
-              | Ok () -> Lwt.return_unit
-              | Error `Msg err ->
-                O.error ~conn_id ~ip:dst ~port:dst_port ~err;
-                O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
-                S.TCP.close flow
+             let unfinished_packet = None in
+             let made_progress_mvar = Lwt_mvar.create_empty () in
+             loop_read ~flow ~dst ~dst_port ~conn_id ~unfinished_packet
+               ~made_progress_mvar
+             >>= function
+             | Ok () -> Lwt.return_unit
+             | Error `Msg err ->
+               O.error ~conn_id ~ip:dst ~port:dst_port ~err;
+               O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
+               S.TCP.close flow
           )
           (function (*goto - is this handled correctly?*)
             | exn ->
