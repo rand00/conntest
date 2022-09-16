@@ -78,11 +78,13 @@ module Make
               ~conn_id
               ~unfinished_packet
           in
-          Lwt.async (fun () ->
-            Time.sleep_ns @@ ns_of_sec 2. >>= fun () ->
-            Lwt.cancel looping_action_t
-            |> Lwt.return
-          );
+          (*> goto implementing timeout somehow like this would work*)
+          (* Lwt.async (fun () ->
+           *   Time.sleep_ns @@ ns_of_sec 2. >>= fun () ->
+           *   if 
+           *   Lwt.cancel looping_action_t
+           *   |> Lwt.return
+           * ); *)
           looping_action_t
       and read_and_respond ~flow ~dst ~dst_port ~data ~conn_id
           ~unfinished_packet
