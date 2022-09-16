@@ -34,7 +34,7 @@ module type S = sig
       port:int ->
       ip:Ipaddr.t ->
       monitor_bandwidth:'a ->
-      (unit, [> `Udp of udp_error ]) Lwt_result.t
+      unit Lwt.t
 
   end
 
@@ -133,14 +133,12 @@ module Make
                 O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
                 S.TCP.close flow
           )
-          (function (*goto handle these cases correctly*)
-            | Lwt.Canceled -> 
-              O.error ~conn_id ~ip:dst ~port:dst_port ~err:"Canceled";
+          (function (*goto - is this handled correctly?*)
+            | exn ->
+              let err = Printexc.to_string exn in
+              O.error ~conn_id ~ip:dst ~port:dst_port ~err;
               O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
               S.TCP.close flow
-            | exn ->
-              Logs.err (fun m -> m "%s" @@ Printexc.to_string exn);
-              Lwt.return_unit
           )
       in
       Mirage_runtime.at_exit (fun () ->
@@ -279,8 +277,13 @@ module Make
       let data_str = "I'm "^name in
       let data = Cstruct.of_string data_str in
       O.writing ~ip ~port ~data:data_str;
-      S.UDP.write ~dst:ip ~dst_port:port (S.udp Sv.stack) data
-      |> Lwt_result.map_error (fun err -> `Udp err)
+      S.UDP.write ~dst:ip ~dst_port:port (S.udp Sv.stack) data >>= function
+      | Ok () -> Lwt.return_unit
+      | Error udp_err -> 
+        let _err = Fmt.str "%a" S.UDP.pp_error udp_err in
+        (*> goto add*)
+        (* O.error *)
+        Lwt.return_unit
 
   end
 

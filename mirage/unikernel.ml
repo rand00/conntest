@@ -11,6 +11,10 @@ let lwt_result_flatten_result = function
   | Ok result_t -> result_t
   | Error _ as err -> Lwt.return err
 
+let lwt_result_flip_result = function
+  | Ok t -> t |> Lwt.map (fun v -> Ok v)
+  | Error _ as err -> Lwt.return err
+
 module Main
     (C : Mirage_console.S)
     (Notty_term : Notty_mirage.TERM)
@@ -161,30 +165,14 @@ module Main
       | `Tcp -> Ct.Connect.tcp ~name ~port ~ip ~monitor_bandwidth
       | `Udp -> Ct.Connect.udp ~name ~port ~ip ~monitor_bandwidth
     end
-    |> lwt_result_flatten_result >>= function
+    |> lwt_result_flip_result >>= function
     | Ok () -> Lwt.return_unit
     | Error (`Msg msg) ->
+      (*> goto pass to Ui instead*)
       Logs.err (fun m -> m "Error: try_initiate_connection: %s" msg);
       exit 1
-    (*> goto these should be handled inside Ct as it should loop and try connection*)
-    | Error (`Udp udp_err) ->
-      Logs.err (fun m ->
-        m "Error: try_initiate_connection: %a"
-          S.UDP.pp_error udp_err
-      );
-      exit 1
-    | Error (`Tcp (`Connection tcp_err)) ->
-      Logs.err (fun m -> m "Error: try_initiate_connection: %a"
-          S.TCP.pp_error tcp_err
-      );
-      exit 1
-    | Error (`Tcp (`Write tcp_err)) ->
-      Logs.err (fun m -> m "Error: try_initiate_connection: %a"
-          S.TCP.pp_write_error tcp_err
-      );
-      exit 1
 
-  let render_ui ~console ~init_size () =
+  let render_ui ~init ~image_e ~console ~init_size () =
     let open Lwt.Infix in
     Notty_term.create ~init_size console >>= function
     | Error _ ->
@@ -196,19 +184,19 @@ module Main
         Mirage_runtime.at_exit (fun () ->
           Notty_term.close term
         );
-        Ui.image_e |> Lwt_react.E.map_s (fun image ->
+        image_e |> Lwt_react.E.map_s (fun image ->
           Notty_term.write term @@ `Image image >|= function
           | Ok () -> ()
           | Error _ -> Logs.err (fun m -> m "ERROR: render notty ui")
           (*< goto should always handle errors via Ui module*)
         ) |> Lwt_react.E.keep;
-        Ui.init ()
+        init ()
       end
   
   let start console _notty _time _clock stack =
-    (*> goto implement key*)
     let term_size = 70, 11 in
     let name = Key_gen.name () in
+    (*> goto implement key*)
     let ui_key = `Log in
     let ui_m = match ui_key with
       | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
@@ -216,13 +204,19 @@ module Main
         let module Ui = Conntest.Output.Notty_ui(Time) in
         Ui.Input_event.set_name name;
         Ui.Input_event.set_term_dimensions term_size;
-        Lwt.async @@ render_ui ~console ~init_size:term_size;
+        Lwt.async @@ render_ui
+          ~init:Ui.init
+          ~image_e:Ui.image_e
+          ~console
+          ~init_size:term_size;
         (module Ui.Input_event : Conntest.Output.S)
     in
     let module Ui = (val ui_m) in
-    let module Stack_v = struct let stack = stack end in
-    let module Ct = Conntest.Make(Time)(S)(Stack_v)(Ui)
-    in
+    let module Stack_v = struct
+      type t = S.t
+      let stack = stack
+    end in
+    let module Ct = Conntest.Make(Time)(S)(Stack_v)(Ui) in
     let ct_m = (module Ct : Conntest.S)
     in
     Lwt.async begin fun () -> 
