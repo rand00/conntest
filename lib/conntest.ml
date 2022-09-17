@@ -60,41 +60,34 @@ module Make
     let tcp port =
       let module O = O.Listen.Tcp in
       let open Lwt_result.Syntax in
-      let rec loop_read ~flow ~dst ~dst_port ~conn_id ~made_progress_mvar
-          ~unfinished_packet =
-        S.TCP.read flow >>= function
-        | Ok `Eof ->
+      let rec loop_read ~flow ~dst ~dst_port ~conn_id ~unfinished_packet =
+        Lwt.pick [
+          (*> goto pass this timeout via cli?*)
+          (Time.sleep_ns @@ ns_of_sec 10. >|= fun () -> `Timeout);
+          (S.TCP.read flow >|= fun res -> `Progress res);
+        ]
+        >>= function
+        | `Timeout ->
           O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
           S.TCP.close flow >|= fun () -> Ok ()
-        | Error e ->
-          let msg = Fmt.str "%a" S.TCP.pp_error e in
-          Lwt_result.fail @@ `Msg msg
-        | Ok (`Data data) ->
-          Lwt_mvar.put made_progress_mvar () >>= fun () ->
-          let made_progress_mvar = Lwt_mvar.create_empty () in
-          let looping_action_t =
-            read_and_respond
-              ~flow
-              ~dst
-              ~dst_port
-              ~data
-              ~conn_id
-              ~unfinished_packet
-              ~made_progress_mvar
-          in
-          Lwt.async (fun () ->
-            (*goto this should be done on read from stack instead?*)
-            (*goto should this timeout be signalled to Ui, so it can keep state for a while? *)
-            Lwt.pick [
-              (*> goto pass this timeout via cli?*)
-              (Time.sleep_ns @@ ns_of_sec 2. >|= fun () -> `Timeout);
-              (Lwt_mvar.take made_progress_mvar >|= fun () -> `Progress);
-            ]
-            >|= function
-            | `Timeout -> Lwt.cancel looping_action_t 
-            | `Progress -> ()
-          );
-          looping_action_t
+        (*< goto should this timeout be signalled to Ui, so it can keep state for a while? *)
+        | `Progress res -> 
+          begin match res with 
+            | Ok `Eof ->
+              O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
+              S.TCP.close flow >|= fun () -> Ok ()
+            | Error e ->
+              let msg = Fmt.str "%a" S.TCP.pp_error e in
+              Lwt_result.fail @@ `Msg msg
+            | Ok (`Data data) ->
+              read_and_respond
+                ~flow
+                ~dst
+                ~dst_port
+                ~data
+                ~conn_id
+                ~unfinished_packet
+          end
       and read_and_respond
           ~flow
           ~dst
@@ -102,7 +95,6 @@ module Make
           ~data
           ~conn_id
           ~unfinished_packet
-          ~made_progress_mvar
         =
         let* unfinished = match unfinished_packet with
           | None -> Packet.Tcp.init data |> Lwt.return
@@ -118,7 +110,6 @@ module Make
               ~dst_port
               ~conn_id
               ~unfinished_packet
-              ~made_progress_mvar
           | `Done (packet, more_data) ->
             O.packet ~conn_id ~ip:dst ~port:dst_port packet;
             let response_packet =
@@ -133,13 +124,16 @@ module Make
                 (* O.responded_to_packet ~ip ~port; *)
                 begin match more_data with
                   | None ->
-                    loop_read ~flow ~dst ~dst_port ~conn_id
-                      ~unfinished_packet:None
-                      ~made_progress_mvar
+                    let unfinished_packet = None in
+                    loop_read ~flow ~dst ~dst_port ~conn_id ~unfinished_packet
                   | Some data ->
-                    read_and_respond ~flow ~dst ~dst_port ~data ~conn_id
+                    read_and_respond
+                      ~flow
+                      ~dst
+                      ~dst_port
+                      ~data
+                      ~conn_id
                       ~unfinished_packet
-                      ~made_progress_mvar
                 end
               | Error err ->
                 let msg = Fmt.str "%a" S.TCP.pp_write_error err in
@@ -155,9 +149,7 @@ module Make
         Lwt.catch
           (fun () ->
              let unfinished_packet = None in
-             let made_progress_mvar = Lwt_mvar.create_empty () in
              loop_read ~flow ~dst ~dst_port ~conn_id ~unfinished_packet
-               ~made_progress_mvar
              >>= function
              | Ok () -> Lwt.return_unit
              | Error `Msg err ->
