@@ -206,7 +206,11 @@ module type NOTTY_UI_ARGS = sig
 end
 
 (*> goto make this fit S signature, or inner module?*)
-module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
+module Notty_ui
+    (Time : Mirage_time.S)
+    (Clock : Mirage_clock.MCLOCK)
+    (Args : NOTTY_UI_ARGS)
+= struct
 
   open Lwt_react
   open Lwt.Infix 
@@ -284,7 +288,7 @@ module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
         pier : Pier.t;
         pier_name : string option;
         protocol : [ `Tcp | `Udp ];
-        start_time : unit; (*goto find out which time format makes sense with mirage*)
+        start_time : Int64.t; (*arbitrary startpoint in nanoseconds*)
         error : bool;
         sent_packets : int;
         received_packets : int;
@@ -318,14 +322,19 @@ module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
   open Connection.T
   open Pier.T
 
+  let (name_s : string S.t), name_supd = S.create Args.name
+
+  let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
+    S.create Args.term_dimensions
+
+  let elapsed_ns_s =
+    Tick.e
+    |> E.map (fun _ -> Clock.elapsed_ns ())
+    |> S.hold 0L
+
   (*goto maybe put S on via mli*)
   module Input_event (* : S *) = struct
 
-    let (name_s : string S.t), name_supd = S.create Args.name
-
-    let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
-      S.create Args.term_dimensions
-    
     module Listen = struct
 
       module Tcp = struct
@@ -339,9 +348,6 @@ module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
         
         let (e : event E.t), eupd = E.create ()
 
-        (*goto this could get a temporary id passed
-          .. so id either is `Temp _ | `Clients _
-        *)
         let new_connection ~conn_id ~ip ~port =
           eupd @@ `New_connection {ip; port; conn_id}
 
@@ -422,10 +428,12 @@ module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
     let tcp_server_connections_e =
       let typ = `Server in
       let protocol = `Tcp in
-      Input_event.Listen.Tcp.e
-      |> E.fold (fun acc -> function
+      S.sample Tuple.mk2 
+        Input_event.Listen.Tcp.e
+        elapsed_ns_s
+      |> E.fold (fun acc (event, elapsed_ns) -> match event with
         | `New_connection pier ->
-          let start_time = () in (*goto pass this via event*)
+          let start_time = elapsed_ns in 
           let conn = Connection.make ~typ ~protocol ~start_time ~pier in
           acc |> Conn_id_map.add pier.conn_id conn
         | `Closing_connection pier ->
@@ -455,7 +463,7 @@ module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
 
     open Notty 
 
-    let render_conn (_id, conn) =
+    let render_conn elapsed_ns (_id, conn) =
       let sep_i = I.(string "|" <-> string "|") in
       let make_column title data_i =
         let title_i = I.string title in
@@ -468,22 +476,42 @@ module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
         make_column "#sent" @@ I.strf "%d" conn.sent_packets
       and recv_packages_i =
         make_column "#recv" @@ I.strf "%d" conn.received_packets
+      and uptime_i =
+        let uptime_str =
+          let ns = Int64.sub elapsed_ns conn.start_time in
+          let s = Duration.to_sec ns mod 60 in
+          let m = Duration.to_min ns mod 60 in
+          let h = Duration.to_hour ns mod 24 in
+          if h = 0 && m = 0 then
+            Fmt.str "%ds" s
+          else if h = 0 then 
+            Fmt.str "%dm%ds" m s
+          else           
+            Fmt.str "%dh%dm%ds" h m s
+        in
+        make_column "uptime" @@ I.strf "%s" uptime_str
       in
       [
-        protocol_i;
-        sent_packages_i;
-        recv_packages_i;
+        [
+          protocol_i;
+          uptime_i;
+          sent_packages_i;
+          recv_packages_i;
+        ];
       ]
+      |> List.flatten
       |> I.hcat 
     
-    let render_connections (this_name, (term_w, term_h), conns) =
+    let render_connections (this_name, (term_w, term_h), elapsed_ns, conns) =
       let conns = Conn_id_map.bindings conns in
       let client_conns, server_conns =
         List.partition (fun (_, conn) -> conn.typ = `Client) conns
       in
-      let client_conn_images = client_conns |> List.map render_conn in
-      let server_conn_images = server_conns |> List.map render_conn in
-      let name_i =
+      let client_conn_images =
+        client_conns |> List.map (render_conn elapsed_ns) 
+      and server_conn_images =
+        server_conns |> List.map (render_conn elapsed_ns)
+      and name_i =
         this_name
         |> I.string 
         |> I.hsnap ~align:`Middle term_w in
@@ -503,7 +531,7 @@ module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
       in
       let make_section name_i = function
         | [] -> []
-        | conn_is -> I.empty :: name_i :: conn_is 
+        | conn_is -> I.void 0 1 :: name_i :: conn_is 
       in
       [
         [name_i];
@@ -514,9 +542,10 @@ module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
       |> I.vcat 
     
     let image_s =
-      S.l3 Tuple.mk3
-        Input_event.name_s
-        Input_event.term_dimensions_s
+      S.l4 Tuple.mk4
+        name_s
+        term_dimensions_s
+        elapsed_ns_s
         Data.connections_s
       |> S.map render_connections
 

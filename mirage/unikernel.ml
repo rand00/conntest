@@ -196,7 +196,7 @@ module Main
       end
   
   let start console _notty _time _clock stack =
-    let term_dimensions = 70, 11 in
+    let term_dimensions = 70, 15 in
     let name = Key_gen.name () in
     let ui_key = match Key_gen.ui () with
       | "notty" -> `Notty
@@ -208,7 +208,7 @@ module Main
     let ui_m = match ui_key with
       | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
       | `Notty ->
-        let module Ui = Conntest.Output.Notty_ui(Time)(struct
+        let module Ui = Conntest.Output.Notty_ui(Time)(Clock)(struct
           let name = name
           let term_dimensions = term_dimensions
         end)
