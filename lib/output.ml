@@ -20,7 +20,10 @@ module type S = sig
       *)
       val error : conn_id:string  -> ip:Ipaddr.t -> port:int -> err:string -> unit
       val registered_listener : port:int -> unit
-      val packet : conn_id:string -> ip:Ipaddr.t -> port:int -> Packet.t -> unit
+      val received_packet :
+        conn_id:string -> ip:Ipaddr.t -> port:int -> Packet.t -> unit
+      val sent_packet :
+        conn_id:string -> ip:Ipaddr.t -> port:int -> Packet.t -> unit
     end
 
     module Udp : sig
@@ -96,14 +99,22 @@ module Log_stdout () : S = struct
       let registered_listener ~port =
         Log.info (fun f -> f "registered tcp listener on port %d" port)
 
-      let packet ~conn_id:_ ~ip ~port packet =
+      let received_packet ~conn_id:_ ~ip ~port packet =
         let open Packet.T in
         Log.info (fun f ->
           f "got packet from %s:%d:\n---- header:\n%s\n---- data:\n%s"
             (Ipaddr.to_string ip) port
             (packet.header |> Packet.Header.to_string)
             (packet.data |> preview_big_string)
-            (*< goto depend explicitly on this or do something else*)
+        )
+
+      let sent_packet ~conn_id:_ ~ip ~port packet =
+        let open Packet.T in
+        Log.info (fun f ->
+          f "sent packet to %s:%d:\n---- header:\n%s\n---- data:\n%s"
+            (Ipaddr.to_string ip) port
+            (packet.header |> Packet.Header.to_string)
+            (packet.data |> preview_big_string)
         )
 
     end
@@ -343,7 +354,8 @@ module Notty_ui
           | `New_connection of Pier.t
           | `Closing_connection of Pier.t
           | `Error of (Pier.t * string)
-          | `Packet of Pier.t
+          | `Recv_packet of Pier.t
+          | `Sent_packet of Pier.t
         ]
         
         let (e : event E.t), eupd = E.create ()
@@ -360,9 +372,12 @@ module Notty_ui
         let registered_listener ~port = () 
 
         (*> Note: there is also a remote conn-id in header*)
-        let packet ~conn_id ~ip ~port packet =
-          eupd @@ `Packet {ip; port; conn_id}
+        let received_packet ~conn_id ~ip ~port packet =
+          eupd @@ `Recv_packet {ip; port; conn_id}
 
+        let sent_packet ~conn_id ~ip ~port packet =
+          eupd @@ `Sent_packet {ip; port; conn_id}
+        
       end
 
       module Udp = struct
@@ -443,12 +458,19 @@ module Notty_ui
             | None -> None
             | Some conn -> Some { conn with error = true }
           ) acc
-        | `Packet pier ->
+        | `Recv_packet pier ->
           Conn_id_map.update pier.conn_id (function
             | None -> None (*shouldn't happen*)
             | Some conn ->
               let received_packets = succ conn.received_packets in
               Some { conn with received_packets }
+          ) acc
+        | `Sent_packet pier ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> None (*shouldn't happen*)
+            | Some conn ->
+              let sent_packets = succ conn.sent_packets in
+              Some { conn with sent_packets }
           ) acc
       ) Conn_id_map.empty
 

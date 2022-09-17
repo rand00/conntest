@@ -111,17 +111,17 @@ module Make
               ~conn_id
               ~unfinished_packet
           | `Done (packet, more_data) ->
-            O.packet ~conn_id ~ip:dst ~port:dst_port packet;
-            let response_packet =
-              Packet.T.{ packet with data = "" }
+            O.received_packet ~conn_id ~ip:dst ~port:dst_port packet;
+            let response_packet = Packet.T.{ packet with data = "" } in
+            let response_packet_cstruct =
+              response_packet
               |> Packet.to_string
               |> Cstruct.of_string
             in
             begin
-              S.TCP.write flow response_packet >>= function
+              S.TCP.write flow response_packet_cstruct >>= function
               | Ok () ->
-                (*> goto add this (naming?)*)
-                (* O.responded_to_packet ~ip ~port; *)
+                O.sent_packet ~conn_id ~ip:dst ~port:dst_port response_packet;
                 begin match more_data with
                   | None ->
                     let unfinished_packet = None in
