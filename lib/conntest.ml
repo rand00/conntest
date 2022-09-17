@@ -83,6 +83,8 @@ module Make
               ~made_progress_mvar
           in
           Lwt.async (fun () ->
+            (*goto this should be done on read from stack instead?*)
+            (*goto should this timeout be signalled to Ui, so it can keep state for a while? *)
             Lwt.pick [
               (*> goto pass this timeout via cli?*)
               (Time.sleep_ns @@ ns_of_sec 2. >|= fun () -> `Timeout);

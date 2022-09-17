@@ -10,9 +10,6 @@ type connect_tcp_read_error = [
 
 module type S = sig
 
-  val set_name : string -> unit
-  val set_term_dimensions : (int * int) -> unit
-  
   module Listen : sig
 
     module Tcp : sig
@@ -68,9 +65,6 @@ end
 
 module Log_stdout () : S = struct
 
-  let set_name _ = ()
-  let set_term_dimensions _ = ()
-  
   let src = Logs.Src.create "conntest" ~doc:"conntest events"
   module Log = (val Logs.src_log src : Logs.LOG)
 
@@ -204,8 +198,15 @@ module Log_stdout () : S = struct
 
 end
 
+module type NOTTY_UI_ARGS = sig
+
+  val name : string
+  val term_dimensions : int * int 
+
+end
+
 (*> goto make this fit S signature, or inner module?*)
-module Notty_ui (Time : Mirage_time.S) = struct
+module Notty_ui (Time : Mirage_time.S) (Args : NOTTY_UI_ARGS) = struct
 
   open Lwt_react
   open Lwt.Infix 
@@ -320,12 +321,10 @@ module Notty_ui (Time : Mirage_time.S) = struct
   (*goto maybe put S on via mli*)
   module Input_event (* : S *) = struct
 
-    let (name_s : string option S.t), name_supd = S.create None
-    let set_name s = name_supd @@ Some s
+    let (name_s : string S.t), name_supd = S.create Args.name
 
     let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
-      S.create (70, 20)
-    let set_term_dimensions v = term_dimensions_supd v
+      S.create Args.term_dimensions
     
     module Listen = struct
 
@@ -486,7 +485,6 @@ module Notty_ui (Time : Mirage_time.S) = struct
       let server_conn_images = server_conns |> List.map render_conn in
       let name_i =
         this_name
-        |> Option.value ~default:"N/A"
         |> I.string 
         |> I.hsnap ~align:`Middle term_w in
       let client_conns_name_i =
@@ -503,16 +501,14 @@ module Notty_ui (Time : Mirage_time.S) = struct
         ]
         |> I.zcat
       in
-      let filter_and_pad_title name_i = function
+      let make_section name_i = function
         | [] -> []
-        | _ -> [ I.empty; name_i ]
+        | conn_is -> I.empty :: name_i :: conn_is 
       in
       [
         [name_i];
-        filter_and_pad_title client_conns_name_i client_conn_images;
-        client_conn_images;
-        filter_and_pad_title server_conns_name_i server_conn_images;
-        server_conn_images;
+        make_section client_conns_name_i client_conn_images;
+        make_section server_conns_name_i server_conn_images;
       ]
       |> List.flatten
       |> I.vcat 

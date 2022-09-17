@@ -196,9 +196,8 @@ module Main
       end
   
   let start console _notty _time _clock stack =
-    let term_size = 70, 11 in
+    let term_dimensions = 70, 11 in
     let name = Key_gen.name () in
-    (*> goto implement key*)
     let ui_key = match Key_gen.ui () with
       | "notty" -> `Notty
       | "log" -> `Log
@@ -208,15 +207,17 @@ module Main
     in
     let ui_m = match ui_key with
       | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
-      | `Notty -> 
-        let module Ui = Conntest.Output.Notty_ui(Time) in
-        Ui.Input_event.set_name name;
-        Ui.Input_event.set_term_dimensions term_size;
+      | `Notty ->
+        let module Ui = Conntest.Output.Notty_ui(Time)(struct
+          let name = name
+          let term_dimensions = term_dimensions
+        end)
+        in
         Lwt.async @@ render_ui
           ~init:Ui.init
           ~image_e:Ui.image_e
           ~console
-          ~init_size:term_size;
+          ~init_size:term_dimensions;
         (module Ui.Input_event : Conntest.Output.S)
     in
     let module Ui = (val ui_m) in
