@@ -259,12 +259,6 @@ module Make
         | Ok () ->
           O.sent_packet ~conn_id ~ip ~port ~header ~protocol;
           begin
-            (*> goto goo - avoid reading based on monitor_bandwidth
-              .. also need to tell server (via data or header?) that it shouldn't
-              .. send a response (send this info in each packet)
-                * and then once in a while ask for a response -
-                .. so latency can get updated while doing bandwidth-monitoring 
-            *)
             loop_read_returning flow >>= function
             | Ok (response, _more_data) ->
               (*< goto use the 'more_data' if protocol specifies to read more*)

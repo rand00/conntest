@@ -60,6 +60,7 @@ module type S = sig
       val error_reading : conn_id:string -> ip:Ipaddr.t -> port:int
         -> err:connect_tcp_read_error 
         -> unit
+      (*> goto rename to closing_connection for uniformity*)
       val closing_flow : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
       (*> goto remove?*)
       val closed_flow : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
