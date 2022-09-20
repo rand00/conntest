@@ -23,6 +23,11 @@ module T = struct
   ]
   [@@deriving yojson]
 
+  type connection_state = [
+    | `Normal
+    | `Bandwidth_packets_left of int
+  ]
+  
 end
 include T
 
