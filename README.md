@@ -72,7 +72,7 @@ Starting a `conntest` that only listens:
 solo5-spt --net:service=tap100 mirage/dist/conntest.spt --ipv4 10.0.0.2/24 --name miav0 --listen tcp:1234
 ```
 
-#### Networking setup
+#### Network setup
 
 The following script exemplifies how to setup the bridge and tap-devices to be able to run `spt` unikernels locally. 
 Note that further `iptables` setup to NAT the traffic from your single public ip is needed to expose the unikernels 
