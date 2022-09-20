@@ -1,14 +1,16 @@
 # `conntest`
 
 A MirageOS unikernel that acts as a client and server to 
-other instances of itself, either via `TCP` or `UDP`. It automatically 
+other instances of itself, either via `TCP` or `UDP`. You specify 
+which ports to listen/connect to, and which stats to collect. It automatically 
 reconnects when the connection is lost, so you can e.g. take down an instance 
 and reconfigure it via CLI.
 
 ### Usecases
 * Testing that your networking setup works - e.g. when you use  bridges, 
   `TAP` devices, `NAT`, firewall rules etc.
-* Testing the connection-stats between different servers, MirageOS compilation-targets and network-stacks.
+* Testing the connection-stats between different servers, MirageOS compilation-targets 
+  and network-stacks.
   * This can e.g. be useful if you plan to rearrange where/how your unikernel instances are run.
 * Stress-testing connections by sending lots of data to/from several instances
   at the same time.
