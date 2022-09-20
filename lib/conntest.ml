@@ -140,14 +140,12 @@ module Make
           ~more_data =
         let header = packet.header in
         begin match conn_state with
-          | `Bandwidth_packets_left n ->
+          | `Bandwidth_packets_to_read n ->
             let protocol = None in
             O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
             let conn_state =
-              if n > 0 then 
-                `Bandwidth_packets_left (pred n)
-              else
-                `Normal
+              if n <= 0 then `Normal else 
+                `Bandwidth_packets_to_read (pred n)
             and data = more_data |> Option.value ~default:Cstruct.empty 
             in
             loop_read_until_packet
@@ -174,7 +172,7 @@ module Make
                     let protocol = Some protocol in
                     O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
                     let conn_state =
-                      `Bandwidth_packets_left bwm.Protocol.T.n_packets
+                      `Bandwidth_packets_to_read bwm.Protocol.T.n_packets
                     and data = more_data |> Option.value ~default:Cstruct.empty 
                     in
                     loop_read_until_packet
