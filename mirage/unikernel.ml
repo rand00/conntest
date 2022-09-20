@@ -25,12 +25,12 @@ module Main
 
   (*Merlin-use line: notty.mirage notty lwt_react tcpip mirage-time mirage-console conntest*)
   
-  let try_register_listener ~ct_m input =
+  let try_register_listener ~ct_m ~name input =
     let module Ct = (val ct_m : Conntest.S) in
     begin match input with
       | "tcp" :: port :: [] ->
         begin match int_of_string_opt port with
-          | Some port -> Ct.Listen.tcp port |> Result.ok
+          | Some port -> Ct.Listen.tcp ~name ~port |> Result.ok
           | None ->
             let msg =
               Fmt.str "try_register_listener: Port '%s' is malformed" port
@@ -39,7 +39,7 @@ module Main
         end
       | "udp" :: port :: [] ->
         begin match int_of_string_opt port with
-          | Some port -> Ct.Listen.udp port |> Result.ok
+          | Some port -> Ct.Listen.udp ~name ~port |> Result.ok
           | None ->
             let msg =
               Fmt.str "try_register_listener: Port '%s' is malformed" port
@@ -230,7 +230,7 @@ module Main
     in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
-      |> Lwt_list.iter_p (try_register_listener ~ct_m)
+      |> Lwt_list.iter_p (try_register_listener ~ct_m ~name)
     end;
     Lwt.async begin fun () -> 
       Key_gen.connect ()

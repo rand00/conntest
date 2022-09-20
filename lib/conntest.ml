@@ -15,8 +15,8 @@ module type S = sig
   
   module Listen : sig
 
-    val tcp : int (*port*) -> unit
-    val udp : int (*port*) -> unit
+    val tcp : name:string -> port:int -> unit
+    val udp : name:string -> port:int -> unit
 
   end
 
@@ -57,10 +57,10 @@ module Make
   
   module Listen = struct
 
-    let tcp port =
+    let tcp ~name ~port =
       let module O = O.Listen.Tcp in
       let open Lwt_result.Syntax in
-      let rec loop_read ~flow ~dst ~dst_port ~conn_id ~unfinished_packet =
+      let rec read_more ~flow ~dst ~dst_port ~conn_id ~unfinished_packet =
         Lwt.pick [
           (*> goto pass this timeout via cli?*)
           (Time.sleep_ns @@ ns_of_sec 10. >|= fun () -> `Timeout);
@@ -80,7 +80,7 @@ module Make
               let msg = Fmt.str "%a" S.TCP.pp_error e in
               Lwt_result.fail @@ `Msg msg
             | Ok (`Data data) ->
-              read_and_respond
+              loop_read_until_packet
                 ~flow
                 ~dst
                 ~dst_port
@@ -88,7 +88,7 @@ module Make
                 ~conn_id
                 ~unfinished_packet
           end
-      and read_and_respond
+      and loop_read_until_packet
           ~flow
           ~dst
           ~dst_port
@@ -101,52 +101,52 @@ module Make
           | Some unfinished ->
             Packet.Tcp.append ~data unfinished |> Lwt.return
         in
-        begin match unfinished with
-          | `Unfinished packet ->
-            let unfinished_packet = Some packet in
-            loop_read
-              ~flow
-              ~dst
-              ~dst_port
-              ~conn_id
-              ~unfinished_packet
-          | `Done (packet, more_data) ->
-            let header = packet.header in
-            let* protocol =
-              packet.data
-              |> Protocol.of_string
-              |> Result.map Option.some
-              |> Lwt.return in
-            O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
-            let header = packet.header in
-            let protocol = failwith "todo" in
-            let response_packet_cstruct =
-              { header; data = "" }
-              |> Packet.to_string
-              |> Cstruct.of_string
-            in
-            begin
-              S.TCP.write flow response_packet_cstruct >>= function
-              | Ok () ->
-                O.sent_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
-                begin match more_data with
-                  | None ->
-                    let unfinished_packet = None in
-                    loop_read ~flow ~dst ~dst_port ~conn_id ~unfinished_packet
-                  | Some data ->
-                    read_and_respond
-                      ~flow
-                      ~dst
-                      ~dst_port
-                      ~data
-                      ~conn_id
-                      ~unfinished_packet
-                end
-              | Error err ->
-                let msg = Fmt.str "%a" S.TCP.pp_write_error err in
-                Lwt_result.fail @@ `Msg msg
-            end
-        end
+        match unfinished with
+        | `Unfinished packet ->
+          let unfinished_packet = Some packet in
+          read_more
+            ~flow
+            ~dst
+            ~dst_port
+            ~conn_id
+            ~unfinished_packet
+        | `Done (packet, more_data) ->
+          handle_packet ~conn_id ~dst ~dst_port ~flow ~packet ~more_data
+      and handle_packet ~conn_id ~dst ~dst_port ~flow ~packet ~more_data =
+        (*goto use more data when in bandwidth-monitoring conn-state*)
+        let header = packet.header in
+        let* protocol = packet.data |> Protocol.of_string |> Lwt.return in
+        match protocol with
+        | `Hello hello ->
+          let protocol = Some protocol in
+          O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+          let header = packet.header in
+          let protocol = Some (`Hello Protocol.T.{ name }) in
+          let* () = respond ~conn_id ~dst ~dst_port ~flow ~header ~protocol in
+          read_more ~flow ~dst ~dst_port ~conn_id ~unfinished_packet:None
+        | `Bandwidth_monitor settings ->
+          failwith "todo" (*goo*)
+        | `Latency `Ping -> 
+          let protocol = Some protocol in
+          O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+          let header = packet.header in
+          let protocol = Some (`Latency `Pong) in
+          let* () = respond ~conn_id ~dst ~dst_port ~flow ~header ~protocol in
+          read_more ~flow ~dst ~dst_port ~conn_id ~unfinished_packet:None
+        | `Latency `Pong -> 
+          let protocol = Some protocol in
+          O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+          read_more ~flow ~dst ~dst_port ~conn_id ~unfinished_packet:None
+      and respond ~conn_id ~flow ~dst ~dst_port ~header ~protocol =
+        let data = failwith "todo" in
+        let response = Packet.to_cstructs ~header ~data in
+        S.TCP.writev flow response >>= function
+        | Ok () ->
+          O.sent_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+          Lwt_result.return ()
+        | Error err ->
+          let msg = Fmt.str "%a" S.TCP.pp_write_error err in
+          Lwt_result.fail @@ `Msg msg
       in
       let callback flow =
         Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
@@ -155,17 +155,17 @@ module Make
         O.new_connection ~conn_id ~ip:dst ~port:dst_port;
         Lwt.catch
           (fun () ->
-             let unfinished_packet = None in
-             loop_read ~flow ~dst ~dst_port ~conn_id ~unfinished_packet
-             >>= function
-             | Ok () -> Lwt.return_unit
-             | Error `Msg err ->
-               O.error ~conn_id ~ip:dst ~port:dst_port ~err;
-               O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
-               S.TCP.close flow
+              read_more ~flow ~dst ~dst_port ~conn_id ~unfinished_packet:None
+              >>= function
+              | Ok () ->
+                O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
+                S.TCP.close flow
+              | Error `Msg err ->
+                O.error ~conn_id ~ip:dst ~port:dst_port ~err;
+                O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
+                S.TCP.close flow
           )
-          (function (*goto - is this handled correctly?*)
-            | exn ->
+          (fun exn -> 
               let err = Printexc.to_string exn in
               O.error ~conn_id ~ip:dst ~port:dst_port ~err;
               O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
@@ -178,7 +178,7 @@ module Make
       S.TCP.listen (S.tcp Sv.stack) ~port callback;
       O.registered_listener ~port
 
-    let udp port =
+    let udp ~name ~port =
       let module O = O.Listen.Udp in
       let callback ~src:_ ~dst ~src_port:_ data =
         O.data ~ip:dst ~port ~data;
