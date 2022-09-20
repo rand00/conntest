@@ -111,17 +111,24 @@ module Make
               ~conn_id
               ~unfinished_packet
           | `Done (packet, more_data) ->
-            O.received_packet ~conn_id ~ip:dst ~port:dst_port packet;
-            let response_packet = Packet.T.{ packet with data = "" } in
+            let header = packet.header in
+            let* protocol =
+              packet.data
+              |> Protocol.of_string
+              |> Result.map Option.some
+              |> Lwt.return in
+            O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+            let header = packet.header in
+            let protocol = failwith "todo" in
             let response_packet_cstruct =
-              response_packet
+              { header; data = "" }
               |> Packet.to_string
               |> Cstruct.of_string
             in
             begin
               S.TCP.write flow response_packet_cstruct >>= function
               | Ok () ->
-                O.sent_packet ~conn_id ~ip:dst ~port:dst_port response_packet;
+                O.sent_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
                 begin match more_data with
                   | None ->
                     let unfinished_packet = None in
@@ -200,19 +207,19 @@ module Make
       let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str
       in
       let rec loop_try_connect () =
-        let connection_id = Uuidm.(v `V4 |> to_string) in
-        O.connecting ~ip ~port;
+        let conn_id = Uuidm.(v `V4 |> to_string) in
+        O.connecting ~conn_id ~ip ~port;
         S.TCP.create_connection (S.tcp Sv.stack) (ip, port)
         >>= function
         | Error err ->
           let err = Fmt.str "%a" S.TCP.pp_error err in
-          O.error_connection ~ip ~port ~err;
+          O.error_connection ~conn_id ~ip ~port ~err;
           Time.sleep_ns sleep_ns_before_retry >>= fun () ->
           loop_try_connect ()
         | Ok flow ->
-          O.connected ~ip ~port;
+          O.connected ~conn_id ~ip ~port;
           Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
-          loop_write ~index:0 ~connection_id flow
+          loop_write ~index:0 ~conn_id flow
       and loop_read_returning ?unfinished_packet flow =
         (*> goto add this*)
         (* O.reading_response ~ip ~port; *)
@@ -225,10 +232,8 @@ module Make
               Packet.Tcp.append ~data unfinished |> Lwt.return
           in
           begin match unfinished with
-            | `Done packet ->
-              (*> goto add this ? - maybe call in loop_write on response?*)
-              (* O.packet ~ip:dst ~port:dst_port packet; *)
-              Lwt_result.return packet
+            | `Done packet_and_more_data ->
+              Lwt_result.return packet_and_more_data
             | `Unfinished packet ->
               loop_read_returning ~unfinished_packet:packet flow
           end
@@ -240,18 +245,19 @@ module Make
             | _ -> None
           in
           Lwt_result.fail @@ `Read (err, msg)
-      and loop_write ~index ~connection_id flow =
+      and loop_write ~index ~conn_id flow =
         (*> goto for bandwidth monitoring, create packets of CLI specified size*)
         let sleep_secs = if monitor_bandwidth#enabled then 0.0 else 0.2 in 
-        let header = Packet.T.{ index; connection_id } in
+        let header = Packet.T.{ index; connection_id = conn_id } in
         let data = if monitor_bandwidth#enabled then bandwidth_testdata else
             Cstruct.of_string name
         in
-        O.writing ~ip ~port ~data;
+        O.writing ~conn_id ~ip ~port ~data;
+        let protocol = failwith "todo" in
         Packet.to_cstructs ~header ~data
         |> S.TCP.writev flow >>= function
         | Ok () ->
-          O.wrote_data ~ip ~port;
+          O.sent_packet ~conn_id ~ip ~port ~header ~protocol;
           begin
             (*> goto goo - avoid reading based on monitor_bandwidth
               .. also need to tell server (via data or header?) that it shouldn't
@@ -260,14 +266,19 @@ module Make
                 .. so latency can get updated while doing bandwidth-monitoring 
             *)
             loop_read_returning flow >>= function
-            | Ok _response -> (*goto use response for stats*)
+            | Ok (response, _more_data) ->
+              (*< goto use the 'more_data' if protocol specifies to read more*)
+              let header = response.Packet.T.header in (*goo*)
+              let protocol = failwith "todo" in
+              O.received_packet ~conn_id ~ip ~port ~header ~protocol;
+              (*> goto control if should sleep based on protocol instead*)
               Time.sleep_ns @@ ns_of_sec sleep_secs >>= fun () ->
-              loop_write ~index:(succ index) ~connection_id flow
+              loop_write ~index:(succ index) ~conn_id flow
             | Error err ->
-              O.error_reading ~ip ~port ~err;
-              O.closing_flow ~ip ~port;
+              O.error_reading ~conn_id ~ip ~port ~err;
+              O.closing_flow ~conn_id ~ip ~port;
               S.TCP.close flow >>= fun () ->
-              O.closed_flow ~ip ~port;
+              O.closed_flow ~conn_id ~ip ~port;
               Time.sleep_ns sleep_ns_before_retry >>= fun () ->
               loop_try_connect ()
           end
@@ -277,10 +288,10 @@ module Make
             | _ -> None
           in
           let msg = Fmt.str "%a" S.TCP.pp_write_error private_err in
-          O.error_writing ~ip ~port ~err ~msg;
-          O.closing_flow ~ip ~port;
+          O.error_writing ~conn_id ~ip ~port ~err ~msg;
+          O.closing_flow ~conn_id ~ip ~port;
           S.TCP.close flow >>= fun () ->
-          O.closed_flow ~ip ~port;
+          O.closed_flow ~conn_id ~ip ~port;
           Time.sleep_ns sleep_ns_before_retry >>= fun () ->
           loop_try_connect ()
       in
