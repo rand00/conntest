@@ -25,7 +25,7 @@ module T = struct
 
   type connection_state = [
     | `Normal
-    | `Bandwidth_packets_left of int
+    | `Bandwidth_packets_to_read of int
   ]
   
 end

@@ -126,7 +126,7 @@ module Make
                 O.received_packet ~conn_id ~ip:dst ~port:dst_port
                   ~header ~protocol;
                 let header = packet.header in
-                let protocol = Some (`Hello Protocol.T.{ name }) in
+                let protocol = `Hello Protocol.T.{ name } in
                 let* () = respond ~ctx ~header ~protocol in
                 read_more ~ctx ~unfinished_packet:None
               | `Bandwidth_monitor bwm ->
@@ -145,14 +145,23 @@ module Make
                     in
                     loop_read_until_packet ~ctx ~data ~unfinished_packet:None
                   | `Down -> 
-                    failwith "todo" 
+                    let protocol = Some protocol in
+                    O.received_packet ~conn_id ~ip:dst ~port:dst_port
+                      ~header ~protocol;
+                    let n = bwm.Protocol.T.n_packets in
+                    let data =
+                      String.make bwm.packet_size '%'
+                      |> Cstruct.of_string
+                    in
+                    let* () = respond_with_n_copies ~ctx ~n ~header ~data in
+                    read_more ~ctx ~unfinished_packet:None
                 end
               | `Latency `Ping -> 
                 let protocol = Some protocol in
                 O.received_packet ~conn_id ~ip:dst ~port:dst_port
                   ~header ~protocol;
                 let header = packet.header in
-                let protocol = Some (`Latency `Pong) in
+                let protocol = `Latency `Pong in
                 let* () = respond ~ctx ~header ~protocol in
                 read_more ~ctx ~unfinished_packet:None
               | `Latency `Pong -> 
@@ -164,15 +173,29 @@ module Make
         end
       and respond ~ctx ~header ~protocol =
         let { flow; dst; dst_port; conn_id; conn_state } = ctx in
-        let data = failwith "todo" in
+        let data = protocol |> Protocol.to_cstruct in
         let response = Packet.to_cstructs ~header ~data in
         S.TCP.writev flow response >>= function
         | Ok () ->
+          let protocol = Some protocol in
           O.sent_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
           Lwt_result.return ()
         | Error err ->
           let msg = Fmt.str "%a" S.TCP.pp_write_error err in
           Lwt_result.fail @@ `Msg msg
+      and respond_with_n_copies ~ctx ~n ~header ~data =
+        if n <= 0 then Lwt_result.return () else 
+          let { flow; dst; dst_port; conn_id; conn_state } = ctx in
+          let response = Packet.to_cstructs ~header ~data in
+          S.TCP.writev flow response >>= function
+          | Ok () ->
+            let protocol = None in
+            O.sent_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+            let n = pred n in
+            respond_with_n_copies ~ctx ~n ~header ~data
+          | Error err ->
+            let msg = Fmt.str "%a" S.TCP.pp_write_error err in
+            Lwt_result.fail @@ `Msg msg
       in
       let callback flow =
         Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
