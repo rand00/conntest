@@ -161,16 +161,21 @@ module Make
             begin match protocol with
               | `Hello hello ->
                 let protocol = Some protocol in
-                O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+                O.received_packet ~conn_id ~ip:dst ~port:dst_port
+                  ~header ~protocol;
                 let header = packet.header in
                 let protocol = Some (`Hello Protocol.T.{ name }) in
-                let* () = respond ~conn_id ~dst ~dst_port ~flow ~header ~protocol in
-                read_more ~flow ~dst ~dst_port ~conn_state ~conn_id ~unfinished_packet:None
+                let* () =
+                  respond ~conn_id ~dst ~dst_port ~flow ~header ~protocol
+                in
+                read_more ~flow ~dst ~dst_port ~conn_state ~conn_id
+                  ~unfinished_packet:None
               | `Bandwidth_monitor bwm ->
                 begin match bwm.Protocol.T.direction with
                   | `Up ->
                     let protocol = Some protocol in
-                    O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+                    O.received_packet ~conn_id ~ip:dst ~port:dst_port
+                      ~header ~protocol;
                     let conn_state =
                       `Bandwidth_packets_to_read bwm.Protocol.T.n_packets
                     and data = more_data |> Option.value ~default:Cstruct.empty 
@@ -188,15 +193,21 @@ module Make
                 end
               | `Latency `Ping -> 
                 let protocol = Some protocol in
-                O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+                O.received_packet ~conn_id ~ip:dst ~port:dst_port
+                  ~header ~protocol;
                 let header = packet.header in
                 let protocol = Some (`Latency `Pong) in
-                let* () = respond ~conn_id ~dst ~dst_port ~flow ~header ~protocol in
-                read_more ~flow ~dst ~dst_port ~conn_id ~conn_state ~unfinished_packet:None
+                let* () =
+                  respond ~conn_id ~dst ~dst_port ~flow ~header ~protocol
+                in
+                read_more ~flow ~dst ~dst_port ~conn_id ~conn_state
+                  ~unfinished_packet:None
               | `Latency `Pong -> 
                 let protocol = Some protocol in
-                O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
-                read_more ~flow ~dst ~dst_port ~conn_id ~conn_state ~unfinished_packet:None
+                O.received_packet ~conn_id ~ip:dst ~port:dst_port
+                  ~header ~protocol;
+                read_more ~flow ~dst ~dst_port ~conn_id ~conn_state
+                  ~unfinished_packet:None
             end
         end
       and respond ~conn_id ~flow ~dst ~dst_port ~header ~protocol =
