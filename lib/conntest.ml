@@ -54,21 +54,21 @@ module Make
 
   type stack = S.t
   type udp_error = S.UDP.error
-  
+
   module Listen = struct
 
-    type tcp_context = {
+    type context = {
       flow : S.TCP.flow;
       dst : Ipaddr.t;
       dst_port : int;
       conn_id : string;
-      conn_state : Protocol.connection_state;
+      conn_state : Protocol.server_connection_state;
     }
-    
+
     let tcp ~name ~port =
       let module O = O.Listen.Tcp in
       let open Lwt_result.Syntax in
-      let rec read_more ~ctx ~unfinished_packet =
+      let rec read_more ~(ctx:context) ~unfinished_packet =
         let { flow; dst; dst_port; conn_id; conn_state } = ctx in
         Lwt.pick [
           (*> goto pass this timeout via cli?*)
@@ -79,17 +79,19 @@ module Make
         | `Timeout ->
           O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
           S.TCP.close flow >|= fun () -> Ok ()
+        (*< goto should this return err instead?
+           .. at least should signal `Timeout to Output *)
         (*< goto should this timeout be signalled to Ui, so it can keep state for a while? *)
         | `Progress res -> 
           begin match res with 
             | Ok `Eof ->
               O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
               S.TCP.close flow >|= fun () -> Ok ()
+            | Ok (`Data data) ->
+              loop_read_until_packet ~ctx ~data ~unfinished_packet
             | Error e ->
               let msg = Fmt.str "%a" S.TCP.pp_error e in
               Lwt_result.fail @@ `Msg msg
-            | Ok (`Data data) ->
-              loop_read_until_packet ~ctx ~data ~unfinished_packet
           end
       and loop_read_until_packet ~ctx ~data ~unfinished_packet =
         let* unfinished = match unfinished_packet with
@@ -129,7 +131,7 @@ module Make
                 let protocol = `Hello Protocol.T.{ name } in
                 let* () = respond ~ctx ~header ~protocol in
                 read_more ~ctx ~unfinished_packet:None
-              | `Bandwidth_monitor bwm ->
+              | `Bandwidth bwm ->
                 begin match bwm.Protocol.T.direction with
                   | `Up ->
                     let protocol = Some protocol in
@@ -244,20 +246,24 @@ module Make
 
   module Connect = struct
 
+    type context = {
+      flow : S.TCP.flow;
+      packet_index : int;
+      conn_id : string;
+      conn_state : Protocol.client_connection_state;
+    }
+    
     let sleep_ns_before_retry = ns_of_sec 1.
 
-    (*Note: howto: loop sending packets, to:
-      * check if connection is up
-      * check latency
-      * optionally monitor bandwidth
-    *)
     let tcp ~name ~port ~ip ~monitor_bandwidth =
+      let open Lwt_result.Syntax in
       let module O = O.Connect.Tcp in
       let bandwidth_testdata_str = String.make monitor_bandwidth#packet_size '%' in
-      let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str
+      let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str in
+      let n_bandwidth_packets = 20 in
+      let conn_id = Uuidm.(v `V4 |> to_string) 
       in
       let rec loop_try_connect () =
-        let conn_id = Uuidm.(v `V4 |> to_string) in
         O.connecting ~conn_id ~ip ~port;
         S.TCP.create_connection (S.tcp Sv.stack) (ip, port)
         >>= function
@@ -269,75 +275,206 @@ module Make
         | Ok flow ->
           O.connected ~conn_id ~ip ~port;
           Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
-          loop_write ~index:0 ~conn_id flow
-      and loop_read_returning ?unfinished_packet flow =
-        (*> goto add this*)
-        (* O.reading_response ~ip ~port; *)
-        S.TCP.read flow >>= function
-        | Ok (`Data data) ->
-          let open Lwt_result.Syntax in
-          let* unfinished = match unfinished_packet with
-            | None -> Packet.Tcp.init data |> Lwt.return
-            | Some unfinished ->
-              Packet.Tcp.append ~data unfinished |> Lwt.return
+          let ctx = {
+            flow;
+            conn_id;
+            packet_index = 0;
+            conn_state = `Init;
+          } in
+          (*> goto should loop connect when this errors too
+              .. ! and should handle closing of prev flow too on error*)
+          write_more ~ctx
+      and write_more ~ctx =
+        let header = Packet.T.{
+          index = ctx.packet_index;
+          connection_id = ctx.conn_id
+        } in
+        match ctx.conn_state with
+        | `Init ->
+          let protocol = `Hello Protocol.T.{ name } in
+          let* ctx = write_packet ~ctx ~header ~protocol in
+          let* _more_data = read_packet ~ctx ~unfinished_packet:None in
+          let ctx =
+            let conn_state = `Latency in
+            { ctx with conn_state }
           in
-          begin match unfinished with
-            | `Done packet_and_more_data ->
-              Lwt_result.return packet_and_more_data
-            | `Unfinished packet ->
-              loop_read_returning ~unfinished_packet:packet flow
-          end
-        | Ok `Eof -> Lwt_result.fail `Eof
-        | Error private_err -> 
-          let msg = Fmt.str "%a" S.TCP.pp_error private_err in
-          let err = match private_err with
-            | (#Tcpip.Tcp.error as err) -> Some err
-            | _ -> None
+          write_more ~ctx
+        | `Latency ->
+          let protocol = `Latency `Ping in
+          let* ctx = write_packet ~ctx ~header ~protocol in
+          (*> Note: optimistically expecting `Latency `Pong back*)
+          let* _more_data = read_packet ~ctx ~unfinished_packet:None in
+          let protocol = `Latency `Pong in
+          let* ctx = write_packet ~ctx ~header ~protocol in
+          let ctx =
+            let conn_state =
+              if monitor_bandwidth#enabled then 
+                `Bandwidth `Up
+              else
+                `Latency
+            in
+            { ctx with conn_state }
           in
-          Lwt_result.fail @@ `Read (err, msg)
-      and loop_write ~index ~conn_id flow =
-        (*> goto for bandwidth monitoring, create packets of CLI specified size*)
-        let sleep_secs = if monitor_bandwidth#enabled then 0.0 else 0.2 in 
-        let header = Packet.T.{ index; connection_id = conn_id } in
-        let data = if monitor_bandwidth#enabled then bandwidth_testdata else
-            Cstruct.of_string name
-        in
-        O.writing ~conn_id ~ip ~port ~data;
-        let protocol = failwith "todo" in
+          write_more ~ctx
+        | `Bandwidth (`Up as direction) ->
+          let n_packets = n_bandwidth_packets in
+          let protocol = `Bandwidth Protocol.T.{
+            direction;
+            n_packets; (*goto control via CLI*)
+            packet_size = monitor_bandwidth#packet_size;
+          } in 
+          let* ctx = write_packet ~ctx ~header ~protocol in
+          let* ctx = write_n_copies ~ctx ~n:n_packets ~data:bandwidth_testdata in
+          let ctx =
+            let conn_state = `Bandwidth `Down in
+            { ctx with conn_state }
+          in
+          write_more ~ctx
+        | `Bandwidth (`Down as direction) ->
+          let protocol = `Bandwidth Protocol.T.{
+            direction;
+            n_packets = n_bandwidth_packets; (*goto control via CLI*)
+            packet_size = monitor_bandwidth#packet_size;
+          } in 
+          let* ctx = write_packet ~ctx ~header ~protocol in
+          (*goo*)
+          failwith "todo"
+        | _ -> 
+          failwith "todo"
+      (*goo*)
+        (* let data = if monitor_bandwidth#enabled then bandwidth_testdata else
+         *     Cstruct.of_string name
+         * in *)
+          (*> goto find out if I want to do this - at least remove data argument*)
+          (* O.writing ~conn_id ~ip ~port ~data; *)
+      and write_packet ~ctx ~header ~protocol =
+        let data = Protocol.to_cstruct protocol in
         Packet.to_cstructs ~header ~data
-        |> S.TCP.writev flow >>= function
+        |> S.TCP.writev ctx.flow >>= function
         | Ok () ->
+          let protocol = Some protocol in
           O.sent_packet ~conn_id ~ip ~port ~header ~protocol;
-          begin
-            loop_read_returning flow >>= function
-            | Ok (response, _more_data) ->
-              (*< goto use the 'more_data' if protocol specifies to read more*)
-              let header = response.Packet.T.header in (*goo*)
-              let protocol = failwith "todo" in
-              O.received_packet ~conn_id ~ip ~port ~header ~protocol;
-              (*> goto control if should sleep based on protocol instead*)
-              Time.sleep_ns @@ ns_of_sec sleep_secs >>= fun () ->
-              loop_write ~index:(succ index) ~conn_id flow
-            | Error err ->
-              O.error_reading ~conn_id ~ip ~port ~err;
-              O.closing_flow ~conn_id ~ip ~port;
-              S.TCP.close flow >>= fun () ->
-              O.closed_flow ~conn_id ~ip ~port;
-              Time.sleep_ns sleep_ns_before_retry >>= fun () ->
-              loop_try_connect ()
-          end
+          let ctx =
+            let packet_index = succ ctx.packet_index in
+            { ctx with packet_index }
+          in
+          Lwt_result.return ctx
         | Error private_err ->
           let err = match private_err with
             | (#Tcpip.Tcp.write_error as err) -> Some err
             | _ -> None
           in
           let msg = Fmt.str "%a" S.TCP.pp_write_error private_err in
-          O.error_writing ~conn_id ~ip ~port ~err ~msg;
-          O.closing_flow ~conn_id ~ip ~port;
-          S.TCP.close flow >>= fun () ->
-          O.closed_flow ~conn_id ~ip ~port;
-          Time.sleep_ns sleep_ns_before_retry >>= fun () ->
-          loop_try_connect ()
+          Lwt_result.fail @@ `Msg msg
+      and write_n_copies ~ctx ~n ~data =
+        let connection_id = ctx.conn_id
+        in
+        let rec loop ~packet_index n =
+          if n <= 0 then
+            Lwt_result.return packet_index
+          else 
+            let header = Packet.T.{
+              index = packet_index;
+              connection_id;
+            }
+            in
+            S.TCP.write ctx.flow data >>= function
+            | Ok () ->
+              let protocol = None in
+              O.sent_packet ~conn_id ~ip ~port ~header ~protocol;
+              loop ~packet_index:(succ packet_index) (pred n)
+            | Error private_err ->
+              let err = match private_err with
+                | (#Tcpip.Tcp.write_error as err) -> Some err
+                | _ -> None
+              in
+              let msg = Fmt.str "%a" S.TCP.pp_write_error private_err in
+              Lwt_result.fail @@ `Msg msg
+        in
+        let+ packet_index = loop ~packet_index:ctx.packet_index n in
+        { ctx with packet_index }
+
+      (*> goto remember to sleep, loop, retry etc somewhere*)
+          (* O.error_writing ~conn_id ~ip ~port ~err ~msg;
+           * O.closing_flow ~conn_id ~ip ~port;
+           * S.TCP.close ctx.flow >>= fun () ->
+           * O.closed_flow ~conn_id ~ip ~port;
+           * Time.sleep_ns sleep_ns_before_retry >>= fun () ->
+           * loop_try_connect () *)
+      (*> goto incorporate parts of this code if needed (was placed in write-loop)*)
+          (* begin
+           *   (\*> goo separate out this into a read_packet *\)
+           *   read_packet ctx.flow >>= function
+           *   | Ok (response, _more_data) ->
+           *     (\*< goto use the 'more_data' if protocol specifies to read more*\)
+           *     (\*> goto control if should sleep based on protocol instead*\)
+           *     (\* let sleep_secs = if monitor_bandwidth#enabled then 0.0 else 0.2 in 
+           *      * Time.sleep_ns @@ ns_of_sec sleep_secs >>= fun () ->
+           *      * let ctx = { ctx with packet_index = succ ctx.packet_index } in
+           *      * write_more ~ctx *\)
+           *   | Error err ->
+           *     O.error_reading ~conn_id ~ip ~port ~err;
+           *     O.closing_flow ~conn_id ~ip ~port;
+           *     S.TCP.close ctx.flow >>= fun () ->
+           *     O.closed_flow ~conn_id ~ip ~port;
+           *     Time.sleep_ns sleep_ns_before_retry >>= fun () ->
+           *     loop_try_connect ()
+           * end *)
+      and read_packet ~ctx ~unfinished_packet =
+        (*> goto add this? *)
+        (* O.reading_response ~ip ~port; *)
+        Lwt.pick [
+          (*> goto pass this timeout via cli?*)
+          (Time.sleep_ns @@ ns_of_sec 10. >|= fun () -> `Timeout);
+          (S.TCP.read ctx.flow >|= fun res -> `Progress res);
+        ]
+        >>= function
+        | `Timeout ->
+          let err = "Conntest.Connect.Tcp.read_packet: Timeout" in
+          Lwt_result.fail @@ `Msg err
+        (*< goto should this return err instead?
+           .. at least should signal `Timeout to Output *)
+        (*< goto should this timeout be signalled to Ui,
+            so it can keep state for a while? *)
+        | `Progress res -> 
+          begin match res with 
+            | Ok `Eof -> Lwt_result.fail `Eof
+            (*< goto check how this is handled outside - should actually be error
+                when expecting packet!*)
+            | Ok (`Data data) ->
+              let* unfinished = match unfinished_packet with
+                | None -> Packet.Tcp.init data |> Lwt.return
+                | Some unfinished ->
+                  Packet.Tcp.append ~data unfinished |> Lwt.return
+              in
+              begin match unfinished with
+                | `Done (packet, more_data) ->
+                  let header = packet.Packet.T.header in
+                  let+ protocol =
+                    packet.Packet.T.data
+                    |> Protocol.of_string
+                    |> Lwt.return in
+                  let protocol = Some protocol in
+                  (*> gomaybe fail on wrong packet recived? - optimistic makes sense,
+                      .. as there can be so many edgecases that I don't want to catch
+                         * < this would need some 'expected' param, or returning header * protocol
+                  *)
+                  (*> Note: optimistically receiving `Hello from server*)
+                  O.received_packet ~conn_id ~ip ~port ~header ~protocol;
+                  more_data
+                | `Unfinished packet ->
+                  read_packet ~ctx ~unfinished_packet:(Some packet)
+              end
+            | Error private_err -> 
+              let msg = Fmt.str "%a" S.TCP.pp_error private_err in
+              let err = match private_err with
+                | (#Tcpip.Tcp.error as err) -> Some err
+                | _ -> None
+              in
+              (* Lwt_result.fail @@ `Read (err, msg) *)
+              Lwt_result.fail @@ `Msg msg
+              (*goo*)
+          end
       in
       loop_try_connect ()
 

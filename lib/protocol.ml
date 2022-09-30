@@ -18,13 +18,20 @@ module T = struct
 
   type t = [
     | `Hello of info
-    | `Bandwidth_monitor of bandwidth_monitor
+    | `Bandwidth of bandwidth_monitor
     | `Latency of [ `Ping | `Pong ]
   ]
   [@@deriving yojson]
 
-  type connection_state = [
+  type server_connection_state = [
     | `Normal
+    | `Bandwidth_packets_to_read of int
+  ]
+
+  type client_connection_state = [
+    | `Init
+    | `Latency
+    | `Bandwidth of direction
     | `Bandwidth_packets_to_read of int
   ]
   
