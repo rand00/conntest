@@ -293,7 +293,7 @@ module Make
         | `Init ->
           let protocol = `Hello Protocol.T.{ name } in
           let* ctx = write_packet ~ctx ~header ~protocol in
-          let* _more_data = read_packet ~ctx ~unfinished_packet:None in
+          let* _more_data = read_packet ~ctx () in
           let ctx =
             let conn_state = `Latency in
             { ctx with conn_state }
@@ -303,7 +303,7 @@ module Make
           let protocol = `Latency `Ping in
           let* ctx = write_packet ~ctx ~header ~protocol in
           (*> Note: optimistically expecting `Latency `Pong back*)
-          let* _more_data = read_packet ~ctx ~unfinished_packet:None in
+          let* _more_data = read_packet ~ctx () in
           let protocol = `Latency `Pong in
           let* ctx = write_packet ~ctx ~header ~protocol in
           let ctx =
@@ -337,16 +337,12 @@ module Make
             packet_size = monitor_bandwidth#packet_size;
           } in 
           let* ctx = write_packet ~ctx ~header ~protocol in
-          (*goo*)
-          failwith "todo"
-        | _ -> 
-          failwith "todo"
-      (*goo*)
-        (* let data = if monitor_bandwidth#enabled then bandwidth_testdata else
-         *     Cstruct.of_string name
-         * in *)
-          (*> goto find out if I want to do this - at least remove data argument*)
-          (* O.writing ~conn_id ~ip ~port ~data; *)
+          let* () = read_n_packets_ignoring_data ~ctx ~n:n_bandwidth_packets in
+          let ctx =
+            let conn_state = `Latency in
+            { ctx with conn_state }
+          in
+          write_more ~ctx
       and write_packet ~ctx ~header ~protocol =
         let data = Protocol.to_cstruct protocol in
         Packet.to_cstructs ~header ~data
@@ -420,22 +416,46 @@ module Make
            *     Time.sleep_ns sleep_ns_before_retry >>= fun () ->
            *     loop_try_connect ()
            * end *)
-      and read_packet ~ctx ~unfinished_packet =
+      and read_n_packets_ignoring_data ~ctx ~n =
+        let rec aux ?more_data n =
+          if n <= 0 then Lwt_result.return () else
+            let* more_data =
+              read_packet
+                ~ctx
+                ~ignore_protocol:true
+                ?more_data
+                ()
+            in
+            aux ?more_data (pred n)
+        in
+        aux n
+      and read_packet
+          ~ctx
+          ?more_data
+          ?unfinished_packet
+          ?(ignore_protocol=false)
+          ()
+        =
         (*> goto add this? *)
         (* O.reading_response ~ip ~port; *)
-        Lwt.pick [
-          (*> goto pass this timeout via cli?*)
-          (Time.sleep_ns @@ ns_of_sec 10. >|= fun () -> `Timeout);
-          (S.TCP.read ctx.flow >|= fun res -> `Progress res);
-        ]
+        let input_t =
+          match more_data with
+          | Some more_data ->
+            Lwt.return @@ `Progress (Ok (`Data more_data))
+          | None ->
+            Lwt.pick [
+              (*> goto pass this timeout via cli*)
+              (Time.sleep_ns @@ ns_of_sec 10. >|= fun () -> `Timeout);
+              (S.TCP.read ctx.flow >|= fun res -> `Progress res);
+            ]
+        in
+        input_t
         >>= function
         | `Timeout ->
           let err = "Conntest.Connect.Tcp.read_packet: Timeout" in
           Lwt_result.fail @@ `Msg err
-        (*< goto should this return err instead?
+        (*< goto should this return explicit error instead?
            .. at least should signal `Timeout to Output *)
-        (*< goto should this timeout be signalled to Ui,
-            so it can keep state for a while? *)
         | `Progress res -> 
           begin match res with 
             | Ok `Eof -> Lwt_result.fail `Eof
@@ -451,19 +471,22 @@ module Make
                 | `Done (packet, more_data) ->
                   let header = packet.Packet.T.header in
                   let+ protocol =
-                    packet.Packet.T.data
-                    |> Protocol.of_string
-                    |> Lwt.return in
-                  let protocol = Some protocol in
+                    if ignore_protocol then Lwt_result.return None else
+                      let+ protocol =
+                        packet.Packet.T.data
+                        |> Protocol.of_string
+                        |> Lwt.return
+                      in
+                      Some protocol
+                  in
                   (*> gomaybe fail on wrong packet recived? - optimistic makes sense,
                       .. as there can be so many edgecases that I don't want to catch
                          * < this would need some 'expected' param, or returning header * protocol
                   *)
-                  (*> Note: optimistically receiving `Hello from server*)
                   O.received_packet ~conn_id ~ip ~port ~header ~protocol;
                   more_data
                 | `Unfinished packet ->
-                  read_packet ~ctx ~unfinished_packet:(Some packet)
+                  read_packet ~ctx ~unfinished_packet:packet ()
               end
             | Error private_err -> 
               let msg = Fmt.str "%a" S.TCP.pp_error private_err in
@@ -473,7 +496,6 @@ module Make
               in
               (* Lwt_result.fail @@ `Read (err, msg) *)
               Lwt_result.fail @@ `Msg msg
-              (*goo*)
           end
       in
       loop_try_connect ()

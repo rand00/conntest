@@ -32,7 +32,6 @@ module T = struct
     | `Init
     | `Latency
     | `Bandwidth of direction
-    | `Bandwidth_packets_to_read of int
   ]
   
 end
