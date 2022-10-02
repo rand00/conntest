@@ -250,11 +250,11 @@ module Make
       flow : S.TCP.flow;
       packet_index : int;
       conn_id : string;
-      conn_state : Protocol.client_connection_state;
     }
     
     let sleep_ns_before_retry = ns_of_sec 1.
 
+    (*> goto goo - still missing loop-retry etc*)
     let tcp ~name ~port ~ip ~monitor_bandwidth =
       let open Lwt_result.Syntax in
       let module O = O.Connect.Tcp in
@@ -279,26 +279,22 @@ module Make
             flow;
             conn_id;
             packet_index = 0;
-            conn_state = `Init;
           } in
           (*> goto should loop connect when this errors too
               .. ! and should handle closing of prev flow too on error*)
-          write_more ~ctx
-      and write_more ~ctx =
+          write_more ~ctx ~conn_state:`Init
+      and write_more ~ctx ~conn_state =
         let header = Packet.T.{
           index = ctx.packet_index;
           connection_id = ctx.conn_id
         } in
-        match ctx.conn_state with
+        match conn_state with
         | `Init ->
           let protocol = `Hello Protocol.T.{ name } in
           let* ctx = write_packet ~ctx ~header ~protocol in
           let* _more_data = read_packet ~ctx () in
-          let ctx =
-            let conn_state = `Latency in
-            { ctx with conn_state }
-          in
-          write_more ~ctx
+          let conn_state = `Latency in
+          write_more ~ctx ~conn_state
         | `Latency ->
           let protocol = `Latency `Ping in
           let* ctx = write_packet ~ctx ~header ~protocol in
@@ -306,16 +302,13 @@ module Make
           let* _more_data = read_packet ~ctx () in
           let protocol = `Latency `Pong in
           let* ctx = write_packet ~ctx ~header ~protocol in
-          let ctx =
-            let conn_state =
-              if monitor_bandwidth#enabled then 
-                `Bandwidth `Up
-              else
-                `Latency
-            in
-            { ctx with conn_state }
+          let conn_state =
+            if monitor_bandwidth#enabled then 
+              `Bandwidth `Up
+            else
+              `Latency
           in
-          write_more ~ctx
+          write_more ~ctx ~conn_state
         | `Bandwidth (`Up as direction) ->
           let n_packets = n_bandwidth_packets in
           let protocol = `Bandwidth Protocol.T.{
@@ -325,11 +318,8 @@ module Make
           } in 
           let* ctx = write_packet ~ctx ~header ~protocol in
           let* ctx = write_n_copies ~ctx ~n:n_packets ~data:bandwidth_testdata in
-          let ctx =
-            let conn_state = `Bandwidth `Down in
-            { ctx with conn_state }
-          in
-          write_more ~ctx
+          let conn_state = `Bandwidth `Down in
+          write_more ~ctx ~conn_state
         | `Bandwidth (`Down as direction) ->
           let protocol = `Bandwidth Protocol.T.{
             direction;
@@ -338,11 +328,8 @@ module Make
           } in 
           let* ctx = write_packet ~ctx ~header ~protocol in
           let* () = read_n_packets_ignoring_data ~ctx ~n:n_bandwidth_packets in
-          let ctx =
-            let conn_state = `Latency in
-            { ctx with conn_state }
-          in
-          write_more ~ctx
+          let conn_state = `Latency in
+          write_more ~ctx ~conn_state
       and write_packet ~ctx ~header ~protocol =
         let data = Protocol.to_cstruct protocol in
         Packet.to_cstructs ~header ~data
