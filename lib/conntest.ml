@@ -390,33 +390,6 @@ module Make
         in
         let+ packet_index = loop ~packet_index:ctx.packet_index n in
         { ctx with packet_index }
-
-      (*> goto remember to sleep, loop, retry etc somewhere*)
-          (* O.error_writing ~conn_id ~ip ~port ~err ~msg;
-           * O.closing_flow ~conn_id ~ip ~port;
-           * S.TCP.close ctx.flow >>= fun () ->
-           * O.closed_flow ~conn_id ~ip ~port;
-           * Time.sleep_ns sleep_ns_before_retry >>= fun () ->
-           * loop_try_connect () *)
-      (*> goto incorporate parts of this code if needed (was placed in write-loop)*)
-          (* begin
-           *   (\*> goo separate out this into a read_packet *\)
-           *   read_packet ctx.flow >>= function
-           *   | Ok (response, _more_data) ->
-           *     (\*< goto use the 'more_data' if protocol specifies to read more*\)
-           *     (\*> goto control if should sleep based on protocol instead*\)
-           *     (\* let sleep_secs = if monitor_bandwidth#enabled then 0.0 else 0.2 in 
-           *      * Time.sleep_ns @@ ns_of_sec sleep_secs >>= fun () ->
-           *      * let ctx = { ctx with packet_index = succ ctx.packet_index } in
-           *      * write_more ~ctx *\)
-           *   | Error err ->
-           *     O.error_reading ~conn_id ~ip ~port ~err;
-           *     O.closing_flow ~conn_id ~ip ~port;
-           *     S.TCP.close ctx.flow >>= fun () ->
-           *     O.closed_flow ~conn_id ~ip ~port;
-           *     Time.sleep_ns sleep_ns_before_retry >>= fun () ->
-           *     loop_try_connect ()
-           * end *)
       and read_n_packets_ignoring_data ~ctx ~n =
         let rec aux ?more_data n =
           if n <= 0 then Lwt_result.return () else
