@@ -76,12 +76,7 @@ module Make
           (S.TCP.read flow >|= fun res -> `Progress res);
         ]
         >>= function
-        | `Timeout ->
-          O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
-          S.TCP.close flow >|= fun () -> Ok ()
-        (*< goto should this return err instead?
-           .. at least should signal `Timeout to Output *)
-        (*< goto should this timeout be signalled to Ui, so it can keep state for a while? *)
+        | `Timeout -> Lwt_result.fail @@ `Msg "Timeout"
         | `Progress res -> 
           begin match res with 
             | Ok `Eof ->
@@ -127,7 +122,6 @@ module Make
                 let protocol = Some protocol in
                 O.received_packet ~conn_id ~ip:dst ~port:dst_port
                   ~header ~protocol;
-                let header = packet.header in
                 let protocol = `Hello Protocol.T.{ name } in
                 let* () = respond ~ctx ~header ~protocol in
                 read_more ~ctx ~unfinished_packet:None
@@ -158,7 +152,8 @@ module Make
                     let* () = respond_with_n_copies ~ctx ~n ~header ~data in
                     read_more ~ctx ~unfinished_packet:None
                 end
-              | `Latency `Ping -> 
+              | `Latency `Ping ->
+                (*> goto write this proc more like Connect.tcp - seems cleaner*)
                 let protocol = Some protocol in
                 O.received_packet ~conn_id ~ip:dst ~port:dst_port
                   ~header ~protocol;
@@ -314,6 +309,10 @@ module Make
           let* ctx = write_packet ~ctx ~header ~protocol in
           (*> Note: optimistically expecting `Latency `Pong back*)
           let* _more_data = read_packet ~ctx () in
+          let header = Packet.T.{
+            index = ctx.packet_index;
+            connection_id = ctx.conn_id
+          } in
           let protocol = `Latency `Pong in
           let* ctx = write_packet ~ctx ~header ~protocol in
           let conn_state =
