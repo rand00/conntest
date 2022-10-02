@@ -282,7 +282,21 @@ module Make
           } in
           (*> goto should loop connect when this errors too
               .. ! and should handle closing of prev flow too on error*)
-          write_more ~ctx ~conn_state:`Init
+          write_more ~ctx ~conn_state:`Init >>= function
+          | Ok _ ->
+            (*goto signal this case to Output - but as what?*)
+            O.closing_flow ~conn_id ~ip ~port;
+            S.TCP.close flow >>= fun () ->
+            O.closed_flow ~conn_id ~ip ~port;
+            Time.sleep_ns sleep_ns_before_retry >>= fun () ->
+            loop_try_connect ()
+          | Error err ->
+            O.error_reading ~conn_id ~ip ~port ~err;
+            O.closing_flow ~conn_id ~ip ~port;
+            S.TCP.close flow >>= fun () ->
+            O.closed_flow ~conn_id ~ip ~port;
+            Time.sleep_ns sleep_ns_before_retry >>= fun () ->
+            loop_try_connect ()
       and write_more ~ctx ~conn_state =
         let header = Packet.T.{
           index = ctx.packet_index;
