@@ -115,15 +115,19 @@ module Tcp = struct
   let append ~data unfinished =
     Buffer.add_string unfinished.buffer @@ Cstruct.to_string data;
     let+ unfinished =
-      if Buffer.length unfinished.buffer >= unfinished.header_len then
-        let+ header =
-          Buffer.sub unfinished.buffer 0 unfinished.header_len
-          |> Header.of_string
-          |> Result.map_error (fun s -> `Msg s)
-        in
-        { unfinished with header = Some header }
-      else
-        Ok unfinished
+      begin match unfinished.header with
+        | Some _ -> Ok unfinished
+        | None -> 
+          if Buffer.length unfinished.buffer >= unfinished.header_len then (
+            let+ header =
+              Buffer.sub unfinished.buffer 0 unfinished.header_len
+              |> Header.of_string
+              |> Result.map_error (fun s -> `Msg s)
+            in
+            { unfinished with header = Some header }
+          ) else
+            Ok unfinished
+      end
     in
     let full_len = unfinished.header_len + unfinished.data_len in
     if Buffer.length unfinished.buffer >= full_len then
@@ -134,14 +138,14 @@ module Tcp = struct
           unfinished.data_len
       in
       let more_data =
-        if Buffer.length unfinished.buffer > full_len then
+        if Buffer.length unfinished.buffer > full_len then (
           let rest =
             Buffer.sub unfinished.buffer
               full_len
-              (Buffer.length unfinished.buffer)
+              (Buffer.length unfinished.buffer - full_len)
           in
           Some (Cstruct.of_string rest)
-        else None
+        ) else None
       in
       `Done ({ header; data }, more_data)
     else
