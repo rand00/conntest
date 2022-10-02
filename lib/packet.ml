@@ -77,11 +77,7 @@ let to_cstructs ~header ~data =
   let header_str = Header.to_string header in
   let header_len = String.length header_str in
   let data_len = Cstruct.length data in
-  let lengths_str = String.concat "\n" [
-    Int.to_string header_len;
-    Int.to_string data_len;
-  ] ^ "\n"
-  in
+  let lengths_str = Fmt.str "%d\n%d\n" header_len data_len in 
   [
     lengths_str |> Cstruct.of_string;
     header_str |> Cstruct.of_string;
@@ -151,6 +147,7 @@ module Tcp = struct
     else
       `Unfinished unfinished
 
+  (*> goto bettering: need to ba able to incrementally parse lengths*)
   let init data =
     let* header_len, data = Raw.parse_length data in
     let* data_len, data = Raw.parse_length data in

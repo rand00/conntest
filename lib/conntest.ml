@@ -83,23 +83,28 @@ module Make
               O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
               S.TCP.close flow >|= fun () -> Ok ()
             | Ok (`Data data) ->
+              let data = Some data in
               loop_read_until_packet ~ctx ~data ~unfinished_packet
             | Error e ->
               let msg = Fmt.str "%a" S.TCP.pp_error e in
               Lwt_result.fail @@ `Msg msg
           end
       and loop_read_until_packet ~ctx ~data ~unfinished_packet =
-        let* unfinished = match unfinished_packet with
-          | None -> Packet.Tcp.init data |> Lwt.return
-          | Some unfinished ->
-            Packet.Tcp.append ~data unfinished |> Lwt.return
-        in
-        match unfinished with
-        | `Unfinished packet ->
-          let unfinished_packet = Some packet in
-          read_more ~ctx ~unfinished_packet
-        | `Done (packet, more_data) ->
-          handle_packet ~ctx ~packet ~more_data
+          match data with
+          | None -> read_more ~ctx ~unfinished_packet
+          | Some data -> 
+            let* unfinished =
+              match unfinished_packet with
+              | None -> Packet.Tcp.init data |> Lwt.return
+              | Some unfinished ->
+                Packet.Tcp.append ~data unfinished |> Lwt.return
+            in
+            match unfinished with
+            | `Unfinished packet ->
+              let unfinished_packet = Some packet in
+              read_more ~ctx ~unfinished_packet
+            | `Done (packet, more_data) ->
+              handle_packet ~ctx ~packet ~more_data
       and handle_packet ~ctx ~packet ~more_data =
         let { flow; dst; dst_port; conn_id; conn_state } = ctx in
         let header = packet.header in
@@ -113,8 +118,7 @@ module Make
                   `Bandwidth_packets_to_read (pred n) in
               { ctx with conn_state }
             in
-            let data = more_data |> Option.value ~default:Cstruct.empty in
-            loop_read_until_packet ~ctx ~data ~unfinished_packet:None
+            loop_read_until_packet ~ctx ~data:more_data ~unfinished_packet:None
           | `Normal -> 
             let* protocol = packet.data |> Protocol.of_string |> Lwt.return in
             begin match protocol with
@@ -136,9 +140,7 @@ module Make
                         `Bandwidth_packets_to_read bwm.Protocol.T.n_packets in
                       { ctx with conn_state }
                     in
-                    let data =
-                      more_data |> Option.value ~default:Cstruct.empty
-                    in
+                    let data = more_data in
                     loop_read_until_packet ~ctx ~data ~unfinished_packet:None
                   | `Down -> 
                     let protocol = Some protocol in
@@ -374,7 +376,8 @@ module Make
               connection_id;
             }
             in
-            S.TCP.write ctx.flow data >>= function
+            let data = Packet.to_cstructs ~header ~data in
+            S.TCP.writev ctx.flow data >>= function
             | Ok () ->
               let protocol = None in
               O.sent_packet ~conn_id ~ip ~port ~header ~protocol;
