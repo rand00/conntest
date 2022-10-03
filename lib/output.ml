@@ -20,8 +20,6 @@ module type S = sig
         .. and notty interface needs error values instead of just a string 
       *)
       val error : conn_id:string  -> ip:Ipaddr.t -> port:int -> err:string -> unit
-      val received_data :
-        conn_id:string -> ip:Ipaddr.t -> port:int -> Cstruct.t -> unit
       val received_packet :
         conn_id:string -> ip:Ipaddr.t -> port:int
         -> header:Packet.header -> protocol:Protocol.t option -> unit
@@ -111,16 +109,6 @@ module Log_stdout () : S = struct
 
       let registered_listener ~port =
         Log.info (fun f -> f "registered tcp listener on port %d" port)
-
-      (*> goto make debug level? (then user can filter with --log='<this-logger>:*')
-        .. hmm didn't get to work with --logs='conntest:debug'
-      *)
-      let received_data ~conn_id:_ ~ip ~port data =
-        Log.info (fun f ->
-          f "got raw data from %s:%d:\n%s"
-            (Ipaddr.to_string ip) port
-            (Cstruct.to_string data)
-        )
 
       let received_packet ~conn_id:_ ~ip ~port ~header ~protocol =
         let open Packet.T in
@@ -414,8 +402,6 @@ module Notty_ui
 
         let registered_listener ~port = () 
 
-        let received_data ~conn_id:_ ~ip ~port data = ()
-          
         (*> Note: there is also a remote conn-id in header*)
         let received_packet ~conn_id ~ip ~port ~header ~protocol =
           eupd @@ `Recv_packet {ip; port; conn_id}
