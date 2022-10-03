@@ -114,7 +114,7 @@ type unfinished = [
 module Tcp = struct 
 
   (*> goto separate sections out from this function for readability*)
-  let append ~data unfinished =
+  let rec append ~data unfinished =
     match unfinished with
     | `Init str ->
       begin
@@ -156,7 +156,7 @@ module Tcp = struct
           let buffer = Buffer.create 512 in
           Buffer.add_string buffer rest;
           let unfinished = { header_len; data_len; header = None; buffer } in
-          Ok (`Unfinished (`With_lengths unfinished))
+          append ~data:Cstruct.empty @@ `With_lengths unfinished
       end
     | `With_lengths unfinished -> 
       Buffer.add_string unfinished.buffer @@ Cstruct.to_string data;
