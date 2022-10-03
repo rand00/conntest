@@ -7,44 +7,6 @@ let result_of_opt msg = function
   | Some v -> Ok v
   | None -> Error (`Msg msg)
 
-module Raw = struct
-
-  let find_index c data =
-    let len = Cstruct.length data in
-    let rec aux i =
-      if i >= len then None else 
-      if Char.equal c (Cstruct.get data i) then
-        Some i
-      else
-        aux @@ succ i
-    in
-    aux 0
-  
-  let parse_length data =
-    let* newline_idx =
-      data
-      |> find_index '\n'
-      |> result_of_opt "Packet.Raw.parse_length: No newline found"
-    in
-    let* length_str =
-      try Ok Cstruct.(sub data 0 newline_idx |> to_string) with _ -> 
-        Error (`Msg "Packet.Raw.parse_length: Couldn't extract length")
-    in
-    let* length =
-      int_of_string_opt length_str
-      |> result_of_opt "Packet.Raw.parse_length: Length was not an integer"
-    in
-    let+ data =
-      let length_rest =
-        Cstruct.length data - (newline_idx + 1)
-      in
-      try Ok (Cstruct.sub data (newline_idx + 1) length_rest) with _ -> 
-        Error (`Msg "Packet.Raw.parse_length: Couldn't extract length")
-    in
-    length, data
-
-end
-
 module Header = struct
 
   type t = {
