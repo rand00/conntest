@@ -83,6 +83,7 @@ module Make
           begin match res with 
             | Ok `Eof ->
               Logs.err (fun m -> m "DEBUG: RECEIVED EOF");
+              (*< goto make this into an error*)
               Lwt_result.return ()
             | Ok (`Data data) ->
               O.received_data ~conn_id ~ip:dst ~port:dst_port data;
@@ -99,13 +100,8 @@ module Make
           | Some data -> 
             let* unfinished =
               match unfinished_packet with
-              | None ->
-                (*goto remove debug*)
-                Logs.err (fun m -> m "DEBUG: Packet.Tcp.init data");
-                Packet.Tcp.init data |> Lwt.return
+              | None -> Packet.Tcp.init data |> Lwt.return
               | Some unfinished ->
-                (*goto remove debug*)
-                Logs.err (fun m -> m "DEBUG: Packet.Tcp.append ~data unfinished");
                 Packet.Tcp.append ~data unfinished |> Lwt.return
             in
             match unfinished with
@@ -113,13 +109,6 @@ module Make
               let unfinished_packet = Some packet in
               read_more ~ctx ~unfinished_packet
             | `Done (packet, more_data) ->
-              (*goto remove debug*)
-              let d_more_data =
-                more_data
-                |> Option.map Cstruct.to_string
-                |> Option.value ~default:"None"
-              in
-              Logs.err (fun m -> m "DEBUG: more_data = %s" d_more_data);
               handle_packet ~ctx ~packet ~more_data
       and handle_packet ~ctx ~packet ~more_data =
         let { flow; dst; dst_port; conn_id; conn_state } = ctx in
@@ -483,7 +472,7 @@ module Make
                   O.received_packet ~conn_id ~ip ~port ~header ~protocol;
                   more_data
                 | `Unfinished packet ->
-                  read_packet ~ctx ~unfinished_packet:packet ()
+                  read_packet ~ctx ~unfinished_packet:packet ~ignore_protocol ()
               end
             | Error private_err -> 
               let msg = Fmt.str "%a" S.TCP.pp_error private_err in
