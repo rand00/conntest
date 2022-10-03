@@ -75,51 +75,9 @@ type unfinished = [
 
 module Tcp = struct 
 
-  (*> goto separate sections out from this function for readability*)
   let rec append ~data (unfinished:unfinished) =
     match unfinished with
-    | `Init str ->
-      begin
-        let str = str ^ Cstruct.to_string data in
-        let newline_idxs = begin
-          let (let*) = Option.bind in
-          let* idx_1 = String.index_opt str '\n' in
-          let* idx_2 =
-            try String.index_from_opt str (succ idx_1) '\n' with
-            | Invalid_argument _ -> None
-          in
-          Some (idx_1, idx_2)
-        end in
-        match newline_idxs with 
-        | None -> Ok (`Unfinished (`Init str))
-        | Some (idx_1, idx_2) ->
-          let* header_len =
-            let header_len_str = String.sub str 0 idx_1 in
-            header_len_str
-            |> int_of_string_opt 
-            |> result_of_opt (
-              Fmt.str "Packet.Tcp.append: Header-length was not an integer: '%s'"
-                header_len_str
-            )
-          in
-          let* data_len =
-            let idx = succ idx_1 in
-            let len = idx_2 - idx in
-            let data_len_str = String.sub str idx len in
-            data_len_str
-            |> int_of_string_opt 
-            |> result_of_opt (
-              Fmt.str "Packet.Tcp.append: Data-length was not an integer: '%s'"
-                data_len_str
-            )
-          in
-          let rest =
-            String.(sub str (succ idx_2) (length str - (succ idx_2))) in
-          let buffer = Buffer.create 512 in
-          Buffer.add_string buffer rest;
-          let unfinished = { header_len; data_len; header = None; buffer } in
-          append ~data:Cstruct.empty @@ `With_lengths unfinished
-      end
+    | `Init str -> append_init_aux ~str ~data
     | `With_lengths unfinished -> 
       Buffer.add_string unfinished.buffer @@ Cstruct.to_string data;
       let+ unfinished =
@@ -158,6 +116,47 @@ module Tcp = struct
         `Done ({ header; data }, more_data)
       else
         `Unfinished (`With_lengths unfinished)
+
+  and append_init_aux ~str ~data =
+    let str = str ^ Cstruct.to_string data in
+    let newline_idxs = begin
+      let (let*) = Option.bind in
+      let* idx_1 = String.index_opt str '\n' in
+      let* idx_2 =
+        try String.index_from_opt str (succ idx_1) '\n' with
+        | Invalid_argument _ -> None
+      in
+      Some (idx_1, idx_2)
+    end in
+    match newline_idxs with 
+    | None -> Ok (`Unfinished (`Init str))
+    | Some (idx_1, idx_2) ->
+      let* header_len =
+        let header_len_str = String.sub str 0 idx_1 in
+        header_len_str
+        |> int_of_string_opt 
+        |> result_of_opt (
+          Fmt.str "Packet.Tcp.append: Header-length was not an integer: '%s'"
+            header_len_str
+        )
+      in
+      let* data_len =
+        let idx = succ idx_1 in
+        let len = idx_2 - idx in
+        let data_len_str = String.sub str idx len in
+        data_len_str
+        |> int_of_string_opt 
+        |> result_of_opt (
+          Fmt.str "Packet.Tcp.append: Data-length was not an integer: '%s'"
+            data_len_str
+        )
+      in
+      let rest =
+        String.(sub str (succ idx_2) (length str - (succ idx_2))) in
+      let buffer = Buffer.create 512 in
+      Buffer.add_string buffer rest;
+      let unfinished = { header_len; data_len; header = None; buffer } in
+      append ~data:Cstruct.empty @@ `With_lengths unfinished
 
   let init data = append ~data @@ `Init ""
     
