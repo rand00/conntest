@@ -385,8 +385,8 @@ module Notty_ui
           | `New_connection of Pier.t
           | `Closing_connection of Pier.t
           | `Error of (Pier.t * string)
-          | `Recv_packet of Pier.t
-          | `Sent_packet of Pier.t
+          | `Recv_packet of (Pier.t * Protocol.t option)
+          | `Sent_packet of (Pier.t * Protocol.t option)
         ]
         
         let (e : event E.t), eupd = E.create ()
@@ -404,10 +404,10 @@ module Notty_ui
 
         (*> Note: there is also a remote conn-id in header*)
         let received_packet ~conn_id ~ip ~port ~header ~protocol =
-          eupd @@ `Recv_packet {ip; port; conn_id}
+          eupd @@ `Recv_packet ({ip; port; conn_id}, protocol)
 
         let sent_packet ~conn_id ~ip ~port ~header ~protocol =
-          eupd @@ `Sent_packet {ip; port; conn_id}
+          eupd @@ `Sent_packet ({ip; port; conn_id}, protocol)
         
       end
 
@@ -474,8 +474,8 @@ module Notty_ui
 
   module Data = struct
 
-    let tcp_server_connections_e =
-      let typ = `Server in
+    let tcp_client_connections_e =
+      let typ = `Client in
       let protocol = `Tcp in
       S.sample Tuple.mk2 
         Input_event.Listen.Tcp.e
@@ -492,14 +492,20 @@ module Notty_ui
             | None -> None
             | Some conn -> Some { conn with error = true }
           ) acc
-        | `Recv_packet pier ->
+        | `Recv_packet (pier, protocol) ->
           Conn_id_map.update pier.conn_id (function
             | None -> None (*shouldn't happen*)
             | Some conn ->
               let received_packets = succ conn.received_packets in
-              Some { conn with received_packets }
+              let conn = { conn with received_packets } in
+              begin match protocol with
+                | Some (`Hello info) ->
+                  let pier_name = Some info.Protocol.T.name in
+                  Some { conn with pier_name }
+                | _ -> Some conn
+              end
           ) acc
-        | `Sent_packet pier ->
+        | `Sent_packet (pier, protocol) ->
           Conn_id_map.update pier.conn_id (function
             | None -> None (*shouldn't happen*)
             | Some conn ->
@@ -508,10 +514,10 @@ module Notty_ui
           ) acc
       ) Conn_id_map.empty
 
-    let tcp_server_connections_s =
-      S.hold Conn_id_map.empty tcp_server_connections_e
+    let tcp_client_connections_s =
+      S.hold Conn_id_map.empty tcp_client_connections_e
 
-    let connections_s = tcp_server_connections_s
+    let connections_s = tcp_client_connections_s
         
   end
   
@@ -519,7 +525,7 @@ module Notty_ui
 
     open Notty 
 
-    let render_conn elapsed_ns (_id, conn) =
+    let render_table elapsed_ns conn =
       let sep_i = I.(string "|" <-> string "|") in
       let make_column title data_i =
         let title_i = I.string title in
@@ -557,6 +563,24 @@ module Notty_ui
       ]
       |> List.flatten
       |> I.hcat 
+
+    let render_pier conn =
+      I.strf "To: %s / ip: %a / port: %d"
+        (Option.value conn.pier_name ~default:"N/A")
+        Ipaddr.pp conn.pier.Pier.ip
+        conn.pier.Pier.port
+      |> I.vpad 0 1
+    
+    let render_conn ~term_w ~elapsed_ns (_id, conn) =
+      let pier_i = render_pier conn in
+      let table_i = render_table elapsed_ns conn in
+      let sep_i = I.string (String.make term_w '-') in
+      [
+        pier_i;
+        table_i;
+        sep_i;
+      ]
+      |> I.vcat
     
     let render_connections (this_name, (term_w, term_h), elapsed_ns, conns) =
       let conns = Conn_id_map.bindings conns in
@@ -564,9 +588,9 @@ module Notty_ui
         List.partition (fun (_, conn) -> conn.typ = `Client) conns
       in
       let client_conn_images =
-        client_conns |> List.map (render_conn elapsed_ns) 
+        client_conns |> List.map (render_conn ~term_w ~elapsed_ns) 
       and server_conn_images =
-        server_conns |> List.map (render_conn elapsed_ns)
+        server_conns |> List.map (render_conn ~term_w ~elapsed_ns)
       and name_i =
         this_name
         |> I.string 
