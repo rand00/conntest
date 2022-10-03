@@ -86,30 +86,24 @@ module Make
               (*< goto make this into an error*)
               Lwt_result.return ()
             | Ok (`Data data) ->
-              O.received_data ~conn_id ~ip:dst ~port:dst_port data;
-              (*> goto remove this option wrapper again as packet now supports full incremental read*)
-              let data = Some data in
               loop_read_until_packet ~ctx ~data ~unfinished_packet
             | Error e ->
               let msg = Fmt.str "%a" S.TCP.pp_error e in
               Lwt_result.fail @@ `Msg msg
           end
       and loop_read_until_packet ~ctx ~data ~unfinished_packet =
-          match data with
-          | None -> read_more ~ctx ~unfinished_packet
-          | Some data -> 
-            let* unfinished =
-              match unfinished_packet with
-              | None -> Packet.Tcp.init data |> Lwt.return
-              | Some unfinished ->
-                Packet.Tcp.append ~data unfinished |> Lwt.return
-            in
-            match unfinished with
-            | `Unfinished packet ->
-              let unfinished_packet = Some packet in
-              read_more ~ctx ~unfinished_packet
-            | `Done (packet, more_data) ->
-              handle_packet ~ctx ~packet ~more_data
+        let* unfinished =
+          match unfinished_packet with
+          | None -> Packet.Tcp.init data |> Lwt.return
+          | Some unfinished ->
+            Packet.Tcp.append ~data unfinished |> Lwt.return
+        in
+        match unfinished with
+        | `Unfinished packet ->
+          let unfinished_packet = Some packet in
+          read_more ~ctx ~unfinished_packet
+        | `Done (packet, more_data) ->
+          handle_packet ~ctx ~packet ~more_data
       and handle_packet ~ctx ~packet ~more_data =
         let { flow; dst; dst_port; conn_id; conn_state } = ctx in
         let header = packet.header in
@@ -123,7 +117,8 @@ module Make
                   `Bandwidth_packets_to_read (pred n) in
               { ctx with conn_state }
             in
-            loop_read_until_packet ~ctx ~data:more_data ~unfinished_packet:None
+            let data = more_data |> Option.value ~default:Cstruct.empty in
+            loop_read_until_packet ~ctx ~data ~unfinished_packet:None
           | `Normal -> 
             let* protocol = packet.data |> Protocol.of_string |> Lwt.return in
             begin match protocol with
@@ -133,7 +128,7 @@ module Make
                   ~header ~protocol;
                 let protocol = `Hello Protocol.T.{ name } in
                 let* () = respond ~ctx ~header ~protocol in
-                let data = more_data in
+                let data = more_data |> Option.value ~default:Cstruct.empty in
                 loop_read_until_packet ~ctx ~data ~unfinished_packet:None
               | `Bandwidth bwm ->
                 begin match bwm.Protocol.T.direction with
@@ -146,7 +141,7 @@ module Make
                         `Bandwidth_packets_to_read bwm.Protocol.T.n_packets in
                       { ctx with conn_state }
                     in
-                    let data = more_data in
+                    let data = more_data |> Option.value ~default:Cstruct.empty in
                     loop_read_until_packet ~ctx ~data ~unfinished_packet:None
                   | `Down -> 
                     let protocol = Some protocol in
@@ -158,7 +153,7 @@ module Make
                       |> Cstruct.of_string
                     in
                     let* () = respond_with_n_copies ~ctx ~n ~header ~data in
-                    let data = more_data in
+                    let data = more_data |> Option.value ~default:Cstruct.empty in
                     loop_read_until_packet ~ctx ~data ~unfinished_packet:None
                 end
               | `Latency `Ping ->
@@ -169,13 +164,13 @@ module Make
                 let header = packet.header in
                 let protocol = `Latency `Pong in
                 let* () = respond ~ctx ~header ~protocol in
-                let data = more_data in
+                let data = more_data |> Option.value ~default:Cstruct.empty in
                 loop_read_until_packet ~ctx ~data ~unfinished_packet:None
               | `Latency `Pong -> 
                 let protocol = Some protocol in
                 O.received_packet ~conn_id ~ip:dst ~port:dst_port
                   ~header ~protocol;
-                let data = more_data in
+                let data = more_data |> Option.value ~default:Cstruct.empty in
                 loop_read_until_packet ~ctx ~data ~unfinished_packet:None
             end
         end
