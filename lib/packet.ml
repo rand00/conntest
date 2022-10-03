@@ -107,14 +107,14 @@ type unfinished_with_lengths = {
 }
 
 type unfinished = [
-  | `Init of Buffer.t
+  | `Init of string
   | `With_lengths of unfinished_with_lengths
 ]
 
 module Tcp = struct 
 
   (*> goto separate sections out from this function for readability*)
-  let rec append ~data unfinished =
+  let rec append ~data (unfinished:unfinished) =
     match unfinished with
     | `Init str ->
       begin
