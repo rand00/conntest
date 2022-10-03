@@ -67,7 +67,9 @@ module Make
 
     let tcp ~name ~port =
       let module O = O.Listen.Tcp in
-      let open Lwt_result.Syntax in
+      let open Lwt_result.Syntax
+      in
+      (*> goto pass 'more_data' or change name to not be used directly*)
       let rec read_more ~(ctx:context) ~unfinished_packet =
         let { flow; dst; dst_port; conn_id; conn_state } = ctx in
         Lwt.pick [
@@ -80,9 +82,11 @@ module Make
         | `Progress res -> 
           begin match res with 
             | Ok `Eof ->
-              O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
-              S.TCP.close flow >|= fun () -> Ok ()
+              Logs.err (fun m -> m "DEBUG: RECEIVED EOF");
+              Lwt_result.return ()
             | Ok (`Data data) ->
+              O.received_data ~conn_id ~ip:dst ~port:dst_port data;
+              (*> goto remove this option wrapper again as packet now supports full incremental read*)
               let data = Some data in
               loop_read_until_packet ~ctx ~data ~unfinished_packet
             | Error e ->
@@ -95,8 +99,13 @@ module Make
           | Some data -> 
             let* unfinished =
               match unfinished_packet with
-              | None -> Packet.Tcp.init data |> Lwt.return
+              | None ->
+                (*goto remove debug*)
+                Logs.err (fun m -> m "DEBUG: Packet.Tcp.init data");
+                Packet.Tcp.init data |> Lwt.return
               | Some unfinished ->
+                (*goto remove debug*)
+                Logs.err (fun m -> m "DEBUG: Packet.Tcp.append ~data unfinished");
                 Packet.Tcp.append ~data unfinished |> Lwt.return
             in
             match unfinished with
@@ -104,6 +113,13 @@ module Make
               let unfinished_packet = Some packet in
               read_more ~ctx ~unfinished_packet
             | `Done (packet, more_data) ->
+              (*goto remove debug*)
+              let d_more_data =
+                more_data
+                |> Option.map Cstruct.to_string
+                |> Option.value ~default:"None"
+              in
+              Logs.err (fun m -> m "DEBUG: more_data = %s" d_more_data);
               handle_packet ~ctx ~packet ~more_data
       and handle_packet ~ctx ~packet ~more_data =
         let { flow; dst; dst_port; conn_id; conn_state } = ctx in
@@ -128,7 +144,8 @@ module Make
                   ~header ~protocol;
                 let protocol = `Hello Protocol.T.{ name } in
                 let* () = respond ~ctx ~header ~protocol in
-                read_more ~ctx ~unfinished_packet:None
+                let data = more_data in
+                loop_read_until_packet ~ctx ~data ~unfinished_packet:None
               | `Bandwidth bwm ->
                 begin match bwm.Protocol.T.direction with
                   | `Up ->
@@ -152,7 +169,8 @@ module Make
                       |> Cstruct.of_string
                     in
                     let* () = respond_with_n_copies ~ctx ~n ~header ~data in
-                    read_more ~ctx ~unfinished_packet:None
+                    let data = more_data in
+                    loop_read_until_packet ~ctx ~data ~unfinished_packet:None
                 end
               | `Latency `Ping ->
                 (*> goto write this proc more like Connect.tcp - seems cleaner*)
@@ -162,12 +180,14 @@ module Make
                 let header = packet.header in
                 let protocol = `Latency `Pong in
                 let* () = respond ~ctx ~header ~protocol in
-                read_more ~ctx ~unfinished_packet:None
+                let data = more_data in
+                loop_read_until_packet ~ctx ~data ~unfinished_packet:None
               | `Latency `Pong -> 
                 let protocol = Some protocol in
                 O.received_packet ~conn_id ~ip:dst ~port:dst_port
                   ~header ~protocol;
-                read_more ~ctx ~unfinished_packet:None
+                let data = more_data in
+                loop_read_until_packet ~ctx ~data ~unfinished_packet:None
             end
         end
       and respond ~ctx ~header ~protocol =
@@ -377,6 +397,7 @@ module Make
             }
             in
             let data = Packet.to_cstructs ~header ~data in
+            (*> goto goo - check what this data is - if the error is here*)
             S.TCP.writev ctx.flow data >>= function
             | Ok () ->
               let protocol = None in
