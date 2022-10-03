@@ -130,7 +130,7 @@ module Make
             O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
             let ctx =
               let conn_state =
-                if n <= 0 then `Normal else 
+                if n <= 1 then `Normal else 
                   `Bandwidth_packets_to_read (pred n) in
               { ctx with conn_state }
             in
