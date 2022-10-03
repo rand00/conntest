@@ -474,8 +474,8 @@ module Notty_ui
 
   module Data = struct
 
-    let tcp_client_connections_e =
-      let typ = `Client in
+    let tcp_server_connections_e =
+      let typ = `Server in
       let protocol = `Tcp in
       S.sample Tuple.mk2 
         Input_event.Listen.Tcp.e
@@ -514,10 +514,10 @@ module Notty_ui
           ) acc
       ) Conn_id_map.empty
 
-    let tcp_client_connections_s =
-      S.hold Conn_id_map.empty tcp_client_connections_e
+    let tcp_server_connections_s =
+      S.hold Conn_id_map.empty tcp_server_connections_e
 
-    let connections_s = tcp_client_connections_s
+    let connections_s = tcp_server_connections_s
         
   end
   
@@ -565,7 +565,8 @@ module Notty_ui
       |> I.hcat 
 
     let render_pier conn =
-      I.strf "To: %s / ip: %a / port: %d"
+      I.strf "%s: %s / ip: %a / port: %d"
+        (match conn.typ with `Client -> "To" | `Server -> "From")
         (Option.value conn.pier_name ~default:"N/A")
         Ipaddr.pp conn.pier.Pier.ip
         conn.pier.Pier.port
