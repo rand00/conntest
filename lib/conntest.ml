@@ -255,7 +255,6 @@ module Make
     
     let sleep_ns_before_retry = ns_of_sec 1.
 
-    (*> goto goo - still missing loop-retry etc*)
     let tcp ~name ~port ~ip ~monitor_bandwidth =
       let open Lwt_result.Syntax in
       let module O = O.Connect.Tcp in
@@ -381,7 +380,6 @@ module Make
             }
             in
             let data = Packet.to_cstructs ~header ~data in
-            (*> goto goo - check what this data is - if the error is here*)
             S.TCP.writev ctx.flow data >>= function
             | Ok () ->
               let protocol = None in
