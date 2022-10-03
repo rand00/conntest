@@ -98,7 +98,7 @@ let to_string ?override_data_len packet =
     packet_str;
   ]
 
-type unfinished = {
+type unfinished_with_lengths = {
   header_len : int;
   data_len : int;
   header : header option;
@@ -106,53 +106,97 @@ type unfinished = {
   (*< gomaybe: this could also be a list of cstructs if we own the cstructs*)
 }
 
+type unfinished = [
+  | `Init of Buffer.t
+  | `With_lengths of unfinished_with_lengths
+]
+
 module Tcp = struct 
 
+  (*> goto separate sections out from this function for readability*)
   let append ~data unfinished =
-    Buffer.add_string unfinished.buffer @@ Cstruct.to_string data;
-    let+ unfinished =
-      begin match unfinished.header with
-        | Some _ -> Ok unfinished
-        | None -> 
-          if Buffer.length unfinished.buffer >= unfinished.header_len then (
-            let+ header =
-              Buffer.sub unfinished.buffer 0 unfinished.header_len
-              |> Header.of_string
-              |> Result.map_error (fun s -> `Msg s)
-            in
-            { unfinished with header = Some header }
-          ) else
-            Ok unfinished
-      end
-    in
-    let full_len = unfinished.header_len + unfinished.data_len in
-    if Buffer.length unfinished.buffer >= full_len then
-      let header = Option.get unfinished.header in
-      let data =
-        Buffer.sub unfinished.buffer
-          unfinished.header_len
-          unfinished.data_len
-      in
-      let more_data =
-        if Buffer.length unfinished.buffer > full_len then (
-          let rest =
-            Buffer.sub unfinished.buffer
-              full_len
-              (Buffer.length unfinished.buffer - full_len)
+    match unfinished with
+    | `Init str ->
+      begin
+        let str = str ^ Cstruct.to_string data in
+        let newline_idxs = begin
+          let (let*) = Option.bind in
+          let* idx_1 = String.index_opt str '\n' in
+          let* idx_2 =
+            try String.index_from_opt str (succ idx_1) '\n' with
+            | Invalid_argument _ -> None
           in
-          Some (Cstruct.of_string rest)
-        ) else None
+          Some (idx_1, idx_2)
+        end in
+        match newline_idxs with 
+        | None -> Ok (`Unfinished (`Init str))
+        | Some (idx_1, idx_2) ->
+          let* header_len =
+            let header_len_str = String.sub str 0 idx_1 in
+            header_len_str
+            |> int_of_string_opt 
+            |> result_of_opt (
+              Fmt.str "Packet.Tcp.append: Header-length was not an integer: '%s'"
+                header_len_str
+            )
+          in
+          let* data_len =
+            let idx = succ idx_1 in
+            let len = idx_2 - idx in
+            let data_len_str = String.sub str idx len in
+            data_len_str
+            |> int_of_string_opt 
+            |> result_of_opt (
+              Fmt.str "Packet.Tcp.append: Data-length was not an integer: '%s'"
+                data_len_str
+            )
+          in
+          let rest =
+            String.(sub str (succ idx_2) (length str - (succ idx_2))) in
+          let buffer = Buffer.create 512 in
+          Buffer.add_string buffer rest;
+          let unfinished = { header_len; data_len; header = None; buffer } in
+          Ok (`Unfinished (`With_lengths unfinished))
+      end
+    | `With_lengths unfinished -> 
+      Buffer.add_string unfinished.buffer @@ Cstruct.to_string data;
+      let+ unfinished =
+        begin match unfinished.header with
+          | Some _ -> Ok unfinished
+          | None -> 
+            if Buffer.length unfinished.buffer >= unfinished.header_len then (
+              let+ header =
+                Buffer.sub unfinished.buffer 0 unfinished.header_len
+                |> Header.of_string
+                |> Result.map_error (fun s -> `Msg s)
+              in
+              { unfinished with header = Some header }
+            ) else
+              Ok unfinished
+        end
       in
-      `Done ({ header; data }, more_data)
-    else
-      `Unfinished unfinished
+      let full_len = unfinished.header_len + unfinished.data_len in
+      if Buffer.length unfinished.buffer >= full_len then
+        let header = Option.get unfinished.header in
+        let data =
+          Buffer.sub unfinished.buffer
+            unfinished.header_len
+            unfinished.data_len
+        in
+        let more_data =
+          if Buffer.length unfinished.buffer > full_len then (
+            let rest =
+              Buffer.sub unfinished.buffer
+                full_len
+                (Buffer.length unfinished.buffer - full_len)
+            in
+            Some (Cstruct.of_string rest)
+          ) else None
+        in
+        `Done ({ header; data }, more_data)
+      else
+        `Unfinished (`With_lengths unfinished)
 
-  (*> goto bettering: need to ba able to incrementally parse lengths*)
-  let init data =
-    let* header_len, data = Raw.parse_length data in
-    let* data_len, data = Raw.parse_length data in
-    let buffer = Buffer.create 512 in
-    let unfinished = { header_len; data_len; header = None; buffer } in
-    append ~data unfinished
+  let init data = append ~data @@ `Init ""
     
 end
