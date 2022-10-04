@@ -76,7 +76,7 @@ module CsBuffer = struct
   let sub_string v idx len : string =
     let idx_start = idx in
     let idx_after_end = idx + len in
-    let bytes = Bytes.make len 'x' in
+    let return = Cstruct.create_unsafe len in
     let v_rev = List.rev v in
     let len_add = ref 0 in
     v_rev |> List.iter (fun cs ->
@@ -90,16 +90,14 @@ module CsBuffer = struct
         && idx_after_end > cs_idx_start
         && common_idx_start < common_idx_after_end
       then begin
-        for global_char_i = common_idx_start to pred common_idx_after_end do
-          let cs_local_char_i = global_char_i - cs_idx_start in
-          let c = Cstruct.get cs cs_local_char_i in
-          let bytes_local_char_i = global_char_i - idx_start in
-          Bytes.set bytes bytes_local_char_i c
-        done;
+        let cs_local_char_i = common_idx_start - cs_idx_start in
+        let return_local_char_i = common_idx_start - idx_start in
+        let common_len = common_idx_after_end - common_idx_start in
+        Cstruct.blit cs cs_local_char_i return return_local_char_i common_len;
       end;
       len_add := !len_add + len;
     );
-    Bytes.to_string bytes
+    Cstruct.to_string return
   
 end
 
