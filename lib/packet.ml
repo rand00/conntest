@@ -122,11 +122,12 @@ module Tcp = struct
     | `With_lengths unfinished -> 
       let buffer = CsBuffer.add unfinished.buffer data in
       let unfinished = { unfinished with buffer } in
+      let len_buffer = CsBuffer.length unfinished.buffer in
       let+ unfinished =
         begin match unfinished.header with
           | Some _ -> Ok unfinished
           | None -> 
-            if CsBuffer.length unfinished.buffer >= unfinished.header_len then (
+            if len_buffer >= unfinished.header_len then (
               let+ header =
                 CsBuffer.sub_string unfinished.buffer 0 unfinished.header_len
                 |> Header.of_string
@@ -138,7 +139,7 @@ module Tcp = struct
         end
       in
       let full_len = unfinished.header_len + unfinished.data_len in
-      if CsBuffer.length unfinished.buffer >= full_len then
+      if len_buffer >= full_len then
         let header = Option.get unfinished.header in
         let data =
           (*> goto try to implement this in terms of new 'sub' returning new cstruct*)
@@ -148,11 +149,11 @@ module Tcp = struct
             unfinished.data_len
         in
         let more_data =
-          if CsBuffer.length unfinished.buffer > full_len then (
+          if len_buffer > full_len then (
             let rest =
               CsBuffer.sub_string unfinished.buffer
                 full_len
-                (CsBuffer.length unfinished.buffer - full_len)
+                (len_buffer - full_len)
             in
             Some (Cstruct.of_string rest)
           ) else None
