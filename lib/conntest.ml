@@ -121,7 +121,7 @@ module Make
             let data = more_data |> Option.value ~default:Cstruct.empty in
             loop_read_until_packet ~ctx ~data ~unfinished_packet:None
           | `Normal -> 
-            let* protocol = packet.data |> Protocol.of_string |> Lwt.return in
+            let* protocol = packet.data |> Protocol.of_cstruct |> Lwt.return in
             begin match protocol with
               | `Hello hello ->
                 let protocol = Some protocol in
@@ -454,7 +454,7 @@ module Make
                     if ignore_protocol then Lwt_result.return None else
                       let+ protocol =
                         packet.Packet.T.data
-                        |> Protocol.of_string
+                        |> Protocol.of_cstruct
                         |> Lwt.return
                       in
                       Some protocol

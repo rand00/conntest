@@ -29,7 +29,7 @@ module T = struct
 
   type t = {
     header : header;
-    data : string;
+    data : Cstruct.t;
   }
 
 end
@@ -50,10 +50,10 @@ let to_string ?override_data_len packet =
   let header_str = Header.to_string packet.header in
   let header_len = String.length header_str in
   let data_len = match override_data_len with
-    | None -> String.length packet.data
+    | None -> Cstruct.length packet.data
     | Some len -> len
   in
-  let packet_str = header_str ^ packet.data in
+  let packet_str = header_str ^ Cstruct.to_string packet.data in
   String.concat "\n" [
     Int.to_string header_len;
     Int.to_string data_len;
@@ -73,7 +73,7 @@ module CsBuffer = struct
 
   let add v cs = cs :: v
 
-  let sub_string v idx len : string =
+  let sub v idx len : Cstruct.t =
     let idx_start = idx in
     let idx_after_end = idx + len in
     let return = Cstruct.create_unsafe len in
@@ -97,7 +97,9 @@ module CsBuffer = struct
       end;
       len_add := !len_add + len;
     );
-    Cstruct.to_string return
+    return
+
+  let sub_string v idx len = sub v idx len |> Cstruct.to_string
   
 end
 
@@ -144,18 +146,18 @@ module Tcp = struct
         let data =
           (*> goto try to implement this in terms of new 'sub' returning new cstruct*)
           (*> goto for more performance (and as this is not always read) - save cstruct in packet*)
-          CsBuffer.sub_string unfinished.buffer
+          CsBuffer.sub unfinished.buffer
             unfinished.header_len
             unfinished.data_len
         in
         let more_data =
           if len_buffer > full_len then (
             let rest =
-              CsBuffer.sub_string unfinished.buffer
+              CsBuffer.sub unfinished.buffer
                 full_len
                 (len_buffer - full_len)
             in
-            Some (Cstruct.of_string rest)
+            Some rest
           ) else None
         in
         `Done ({ header; data }, more_data)
