@@ -335,7 +335,7 @@ module Notty_ui
         sent_packets : int;
         received_packets : int;
         retries : int option;
-        latency : Duration.t option;
+        latency : Duration.t option; (*< goto right type?*)
         bandwidth : float option; (*MB/sec*)
         packet_size : int option; (*bytes*)
         (* lost_packets : int option; *)
@@ -479,7 +479,7 @@ module Notty_ui
       type bandwidth_data = {
         start_time : Int64.t; (*nanoseconds*)
         packet_size : int;
-        bandwidth_snapshot : float; (*bytes/sec*)
+        bandwidth_snapshot : float; (*MB/sec*)
         i : int;
       }
       
@@ -523,9 +523,9 @@ module Notty_ui
               | Some data ->
                 let i = succ data.i in
                 let bandwidth_snapshot =
-                  let bytes_xfr = data.packet_size * i |> float in
+                  let mbytes_xfr = float (data.packet_size * i) /. 1e6 in
                   let secs = sec_of_ns Int64.(sub elapsed_ns data.start_time) in
-                  bytes_xfr /. secs
+                  mbytes_xfr /. secs
                 in
                 Some { data with i; bandwidth_snapshot } 
             ) acc
@@ -562,12 +562,22 @@ module Notty_ui
               | Some conn ->
                 let received_packets = succ conn.received_packets in
                 let conn = { conn with received_packets } in
-                begin match protocol with
+                let conn = begin match protocol with
                   | Some (`Hello info) ->
                     let pier_name = Some info.Protocol.T.name in
-                    Some { conn with pier_name }
-                  | _ -> Some conn
-                end
+                    { conn with pier_name }
+                  | _ -> conn
+                end in
+                let conn =
+                  match Conn_id_map.find_opt pier.conn_id bwm with
+                  | None -> conn
+                  | Some bwm_data ->
+                    let packet_size = Some bwm_data.packet_size in
+                    let bandwidth = Some bwm_data.bandwidth_snapshot
+                    in
+                    { conn with packet_size; bandwidth }
+                in
+                Some conn
             ) acc
           | `Sent_packet (pier, protocol) ->
             Conn_id_map.update pier.conn_id (function
@@ -616,7 +626,20 @@ module Notty_ui
           else           
             Fmt.str "%dh%dm%ds" h m s
         in
-        make_column "uptime" @@ I.strf "%s" uptime_str
+        make_column "uptime" @@ I.string uptime_str
+      and bandwidth_i =
+        let bandwidth_str =
+          match conn.bandwidth with
+          | None -> "N/A"
+          | Some b -> 
+            if b >= 100. then 
+              Fmt.str "%.0fMB/s" b
+            else if b >= 10. then
+              Fmt.str "%.1fMB/s" b
+            else
+              Fmt.str "%.2fMB/s" b
+        in
+        make_column "bndwdth" @@ I.string bandwidth_str
       in
       [
         [
@@ -624,6 +647,7 @@ module Notty_ui
           uptime_i;
           sent_packages_i;
           recv_packages_i;
+          bandwidth_i;
         ];
       ]
       |> List.flatten
