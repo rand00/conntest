@@ -562,12 +562,12 @@ module Notty_ui
               | Some conn ->
                 let received_packets = succ conn.received_packets in
                 let conn = { conn with received_packets } in
-                let conn = begin match protocol with
+                let conn = match protocol with
                   | Some (`Hello info) ->
                     let pier_name = Some info.Protocol.T.name in
                     { conn with pier_name }
                   | _ -> conn
-                end in
+                in
                 let conn =
                   match Conn_id_map.find_opt pier.conn_id bwm with
                   | None -> conn
