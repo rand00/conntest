@@ -143,6 +143,8 @@ module Tcp = struct
       if CsBuffer.length unfinished.buffer >= full_len then
         let header = Option.get unfinished.header in
         let data =
+          (*> goto try to implement this in terms of new 'sub' returning new cstruct*)
+          (*> goto for more performance (and as this is not always read) - save cstruct in packet*)
           CsBuffer.sub_string unfinished.buffer
             unfinished.header_len
             unfinished.data_len
