@@ -261,7 +261,9 @@ module Make
       let module O = O.Connect.Tcp in
       let bandwidth_testdata_str = String.make monitor_bandwidth#packet_size '%' in
       let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str in
-      let n_bandwidth_packets = 20 in
+      let n_bandwidth_packets =
+        2000. *. 128e3 /. float monitor_bandwidth#packet_size |> truncate
+      in
       let conn_id = Uuidm.(v `V4 |> to_string) 
       in
       let rec loop_try_connect () =
