@@ -69,9 +69,9 @@ module CsBuffer = struct
   (*> goto could cache the length on insertion,
     .. though don't expect many cstructs to be here *)
   let length v =
-    List.fold_left (fun acc cs -> acc + Cstruct.length cs)
+    List.fold_left (fun acc cs -> acc + Cstruct.length cs) 0 v
 
-  let add cs v = cs :: v
+  let add v cs = cs :: v
 
   let sub_string v idx len : string =
     let idx_start = idx in
@@ -107,7 +107,7 @@ type unfinished_with_lengths = {
   header_len : int;
   data_len : int;
   header : header option;
-  buffer : Buffer.t;
+  buffer : CsBuffer.t;
   (*< gomaybe: this could also be a list of cstructs if we own the cstructs*)
 }
 
@@ -122,14 +122,15 @@ module Tcp = struct
     match unfinished with
     | `Init str -> append_init_aux ~str ~data
     | `With_lengths unfinished -> 
-      Buffer.add_string unfinished.buffer @@ Cstruct.to_string data;
+      let buffer = CsBuffer.add unfinished.buffer data in
+      let unfinished = { unfinished with buffer } in
       let+ unfinished =
         begin match unfinished.header with
           | Some _ -> Ok unfinished
           | None -> 
-            if Buffer.length unfinished.buffer >= unfinished.header_len then (
+            if CsBuffer.length unfinished.buffer >= unfinished.header_len then (
               let+ header =
-                Buffer.sub unfinished.buffer 0 unfinished.header_len
+                CsBuffer.sub_string unfinished.buffer 0 unfinished.header_len
                 |> Header.of_string
                 |> Result.map_error (fun s -> `Msg s)
               in
@@ -139,19 +140,19 @@ module Tcp = struct
         end
       in
       let full_len = unfinished.header_len + unfinished.data_len in
-      if Buffer.length unfinished.buffer >= full_len then
+      if CsBuffer.length unfinished.buffer >= full_len then
         let header = Option.get unfinished.header in
         let data =
-          Buffer.sub unfinished.buffer
+          CsBuffer.sub_string unfinished.buffer
             unfinished.header_len
             unfinished.data_len
         in
         let more_data =
-          if Buffer.length unfinished.buffer > full_len then (
+          if CsBuffer.length unfinished.buffer > full_len then (
             let rest =
-              Buffer.sub unfinished.buffer
+              CsBuffer.sub_string unfinished.buffer
                 full_len
-                (Buffer.length unfinished.buffer - full_len)
+                (CsBuffer.length unfinished.buffer - full_len)
             in
             Some (Cstruct.of_string rest)
           ) else None
@@ -196,8 +197,7 @@ module Tcp = struct
       in
       let rest =
         String.(sub str (succ idx_2) (length str - (succ idx_2))) in
-      let buffer = Buffer.create 512 in
-      Buffer.add_string buffer rest;
+      let buffer = [Cstruct.of_string rest] in
       let unfinished = { header_len; data_len; header = None; buffer } in
       append ~data:Cstruct.empty @@ `With_lengths unfinished
 
