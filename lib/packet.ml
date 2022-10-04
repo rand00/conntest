@@ -118,10 +118,10 @@ type unfinished = [
 
 module Tcp = struct 
 
-  let rec append ~data (unfinished:unfinished) =
+  let rec append ~data ?(ignore_data=false) (unfinished:unfinished) =
     match unfinished with
     | `Init str -> append_init_aux ~str ~data
-    | `With_lengths unfinished -> 
+    | `With_lengths unfinished ->
       let buffer = CsBuffer.add unfinished.buffer data in
       let unfinished = { unfinished with buffer } in
       let len_buffer = CsBuffer.length unfinished.buffer in
@@ -144,11 +144,10 @@ module Tcp = struct
       if len_buffer >= full_len then
         let header = Option.get unfinished.header in
         let data =
-          (*> goto try to implement this in terms of new 'sub' returning new cstruct*)
-          (*> goto for more performance (and as this is not always read) - save cstruct in packet*)
-          CsBuffer.sub unfinished.buffer
-            unfinished.header_len
-            unfinished.data_len
+          if ignore_data then Cstruct.empty else 
+            CsBuffer.sub unfinished.buffer
+              unfinished.header_len
+              unfinished.data_len
         in
         let more_data =
           if len_buffer > full_len then (
@@ -204,6 +203,6 @@ module Tcp = struct
       let unfinished = { header_len; data_len; header = None; buffer } in
       append ~data:Cstruct.empty @@ `With_lengths unfinished
 
-  let init data = append ~data @@ `Init ""
+  let init ?(ignore_data=false) data = append ~data ~ignore_data @@ `Init ""
     
 end

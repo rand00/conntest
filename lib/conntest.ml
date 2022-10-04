@@ -71,7 +71,12 @@ module Make
       let open Lwt_result.Syntax
       in
       (*> goto pass 'more_data' or change name to not be used directly*)
-      let rec read_more ~(ctx:context) ~unfinished_packet =
+      let rec read_more
+          ~(ctx:context)
+          ?(ignore_data=false)
+          ~unfinished_packet
+          ()
+        =
         let { flow; dst; dst_port; conn_id; conn_state } = ctx in
         Lwt.pick [
           (*> goto pass this timeout via cli?*)
@@ -87,22 +92,33 @@ module Make
               (*< goto make this into an error*)
               Lwt_result.return ()
             | Ok (`Data data) ->
-              loop_read_until_packet ~ctx ~data ~unfinished_packet
+              loop_read_until_packet
+                ~ctx
+                ~data
+                ~unfinished_packet
+                ~ignore_data
+                ()
             | Error e ->
               let msg = Fmt.str "%a" S.TCP.pp_error e in
               Lwt_result.fail @@ `Msg msg
           end
-      and loop_read_until_packet ~ctx ~data ~unfinished_packet =
+      and loop_read_until_packet
+          ~ctx
+          ~data
+          ?(ignore_data=false)
+          ~unfinished_packet
+          ()
+        =
         let* unfinished =
           match unfinished_packet with
-          | None -> Packet.Tcp.init data |> Lwt.return
+          | None -> Packet.Tcp.init ~ignore_data data |> Lwt.return
           | Some unfinished ->
-            Packet.Tcp.append ~data unfinished |> Lwt.return
+            Packet.Tcp.append ~ignore_data ~data unfinished |> Lwt.return
         in
         match unfinished with
         | `Unfinished packet ->
           let unfinished_packet = Some packet in
-          read_more ~ctx ~unfinished_packet
+          read_more ~ctx ~unfinished_packet ~ignore_data ()
         | `Done (packet, more_data) ->
           handle_packet ~ctx ~packet ~more_data
       and handle_packet ~ctx ~packet ~more_data =
@@ -112,14 +128,22 @@ module Make
           | `Bandwidth_packets_to_read n ->
             let protocol = None in
             O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
-            let ctx =
-              let conn_state =
-                if n <= 1 then `Normal else 
-                  `Bandwidth_packets_to_read (pred n) in
-              { ctx with conn_state }
+            let ctx, ignore_data =
+              let conn_state, ignore_data =
+                if n <= 1 then
+                  `Normal, false
+                else 
+                  `Bandwidth_packets_to_read (pred n), true
+              in
+              { ctx with conn_state }, ignore_data
             in
             let data = more_data |> Option.value ~default:Cstruct.empty in
-            loop_read_until_packet ~ctx ~data ~unfinished_packet:None
+            loop_read_until_packet
+              ~ctx
+              ~data
+              ~ignore_data
+              ~unfinished_packet:None
+              ()
           | `Normal -> 
             let* protocol = packet.data |> Protocol.of_cstruct |> Lwt.return in
             begin match protocol with
@@ -130,7 +154,7 @@ module Make
                 let protocol = `Hello Protocol.T.{ name } in
                 let* () = respond ~ctx ~header ~protocol in
                 let data = more_data |> Option.value ~default:Cstruct.empty in
-                loop_read_until_packet ~ctx ~data ~unfinished_packet:None
+                loop_read_until_packet ~ctx ~data ~unfinished_packet:None ()
               | `Bandwidth bwm ->
                 begin match bwm.Protocol.T.direction with
                   | `Up ->
@@ -143,7 +167,12 @@ module Make
                       { ctx with conn_state }
                     in
                     let data = more_data |> Option.value ~default:Cstruct.empty in
-                    loop_read_until_packet ~ctx ~data ~unfinished_packet:None
+                    loop_read_until_packet
+                      ~ctx
+                      ~data
+                      ~ignore_data:true
+                      ~unfinished_packet:None
+                      ()
                   | `Down -> 
                     let protocol = Some protocol in
                     O.received_packet ~conn_id ~ip:dst ~port:dst_port
@@ -155,7 +184,7 @@ module Make
                     in
                     let* () = respond_with_n_copies ~ctx ~n ~header ~data in
                     let data = more_data |> Option.value ~default:Cstruct.empty in
-                    loop_read_until_packet ~ctx ~data ~unfinished_packet:None
+                    loop_read_until_packet ~ctx ~data ~unfinished_packet:None ()
                 end
               | `Latency `Ping ->
                 (*> goto write this proc more like Connect.tcp - seems cleaner*)
@@ -166,13 +195,13 @@ module Make
                 let protocol = `Latency `Pong in
                 let* () = respond ~ctx ~header ~protocol in
                 let data = more_data |> Option.value ~default:Cstruct.empty in
-                loop_read_until_packet ~ctx ~data ~unfinished_packet:None
+                loop_read_until_packet ~ctx ~data ~unfinished_packet:None ()
               | `Latency `Pong -> 
                 let protocol = Some protocol in
                 O.received_packet ~conn_id ~ip:dst ~port:dst_port
                   ~header ~protocol;
                 let data = more_data |> Option.value ~default:Cstruct.empty in
-                loop_read_until_packet ~ctx ~data ~unfinished_packet:None
+                loop_read_until_packet ~ctx ~data ~unfinished_packet:None ()
             end
         end
       and respond ~ctx ~header ~protocol =
@@ -210,7 +239,7 @@ module Make
         O.new_connection ~conn_id ~ip:dst ~port:dst_port;
         Lwt.catch
           (fun () ->
-              read_more ~ctx ~unfinished_packet:None >>= function
+              read_more ~ctx ~unfinished_packet:None () >>= function
               | Ok () ->
                 O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
                 S.TCP.close flow
@@ -444,10 +473,12 @@ module Make
             (*< goto check how this is handled outside - should actually be error
                 when expecting packet!*)
             | Ok (`Data data) ->
+              let ignore_data = ignore_protocol in
               let* unfinished = match unfinished_packet with
-                | None -> Packet.Tcp.init data |> Lwt.return
+                | None ->
+                  Packet.Tcp.init ~ignore_data data |> Lwt.return
                 | Some unfinished ->
-                  Packet.Tcp.append ~data unfinished |> Lwt.return
+                  Packet.Tcp.append ~data ~ignore_data unfinished |> Lwt.return
               in
               begin match unfinished with
                 | `Done (packet, more_data) ->
