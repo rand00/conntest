@@ -632,12 +632,10 @@ module Notty_ui
           match conn.bandwidth with
           | None -> "N/A"
           | Some b -> 
-            if b >= 100. then 
+            if b >= 10. then 
               Fmt.str "%.0fMB/s" b
-            else if b >= 10. then
-              Fmt.str "%.1fMB/s" b
             else
-              Fmt.str "%.2fMB/s" b
+              Fmt.str "%.1fMB/s" b
         in
         make_column "bndwdth" @@ I.string bandwidth_str
       in
