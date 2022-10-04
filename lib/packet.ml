@@ -60,6 +60,49 @@ let to_string ?override_data_len packet =
     packet_str;
   ]
 
+module CsBuffer = struct
+
+  (*> Note: the idea of this is that ownership of Cstructs is transferred
+      by flow - and we don't need to keep these in memory for long*)
+  type t = Cstruct.t list
+
+  (*> goto could cache the length on insertion,
+    .. though don't expect many cstructs to be here *)
+  let length v =
+    List.fold_left (fun acc cs -> acc + Cstruct.length cs)
+
+  let add cs v = cs :: v
+
+  let sub_string v idx len : string =
+    let idx_start = idx in
+    let idx_after_end = idx + len in
+    let bytes = Bytes.make len 'x' in
+    let v_rev = List.rev v in
+    let len_add = ref 0 in
+    v_rev |> List.iter (fun cs ->
+      let len = Cstruct.length cs in
+      let cs_idx_start = !len_add in
+      let cs_idx_after_end = cs_idx_start + len in
+      let common_idx_start = max idx_start cs_idx_start in
+      let common_idx_after_end = min idx_after_end cs_idx_after_end in
+      if
+        idx_start < cs_idx_after_end
+        && idx_after_end > cs_idx_start
+        && common_idx_start < common_idx_after_end
+      then begin
+        for global_char_i = common_idx_start to pred common_idx_after_end do
+          let cs_local_char_i = global_char_i - cs_idx_start in
+          let c = Cstruct.get cs cs_local_char_i in
+          let bytes_local_char_i = global_char_i - idx_start in
+          Bytes.set bytes bytes_local_char_i c
+        done;
+      end;
+      len_add := !len_add + len;
+    );
+    Bytes.to_string bytes
+  
+end
+
 type unfinished_with_lengths = {
   header_len : int;
   data_len : int;
