@@ -5,8 +5,9 @@ module Output = Output
 let (let*) = Result.bind 
 let (let+) x f = Result.map f x 
 
+(*> goto put somewhere common - is used in Output too*)
 let ns_of_sec n = Int64.of_float (1e9 *. n)
-
+let sec_of_ns ns = Int64.to_float ns /. 1e9
 
 module type S = sig
 
