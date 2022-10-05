@@ -699,7 +699,7 @@ module Notty_ui
 
     let render_pier conn =
       I.strf "%s: %s / ip: %a / port: %d"
-        (match conn.typ with `Client -> "To" | `Server -> "From")
+        (match conn.typ with `Client -> "Server" | `Server -> "Client")
         (Option.value conn.pier_name ~default:"N/A")
         Ipaddr.pp conn.pier.Pier.ip
         conn.pier.Pier.port
@@ -732,14 +732,14 @@ module Notty_ui
         |> I.hsnap ~align:`Middle term_w in
       let client_conns_name_i =
         [
-          I.string "Client-connections" |> I.hsnap ~align:`Middle term_w;
+          I.string "As client" |> I.hsnap ~align:`Middle term_w;
           I.string (String.make term_w '-');
         ]
         |> I.zcat
       in
       let server_conns_name_i =
         [
-          I.string "Server-connections" |> I.hsnap ~align:`Middle term_w;
+          I.string "As server" |> I.hsnap ~align:`Middle term_w;
           I.string (String.make term_w '-');
         ]
         |> I.zcat
