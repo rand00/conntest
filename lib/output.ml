@@ -835,14 +835,14 @@ module Notty_ui
         |> I.hsnap ~align:`Middle term_w in
       let client_conns_name_i =
         [
-          I.string "As client" |> I.hsnap ~align:`Middle term_w;
+          I.string " As client " |> I.hsnap ~align:`Middle term_w;
           I.string (String.make term_w '-');
         ]
         |> I.zcat
       in
       let server_conns_name_i =
         [
-          I.string "As server" |> I.hsnap ~align:`Middle term_w;
+          I.string " As server " |> I.hsnap ~align:`Middle term_w;
           I.string (String.make term_w '-');
         ]
         |> I.zcat
