@@ -335,7 +335,7 @@ module Notty_ui
         sent_packets : int;
         received_packets : int;
         retries : int option;
-        latency : Duration.t option; (*< goto right type?*)
+        latency : int option; (*ms*)
         bandwidth : float option; (*MB/sec*)
         packet_size : int option; (*bytes*)
         (* lost_packets : int option; *)
@@ -483,6 +483,11 @@ module Notty_ui
 
   module Data = struct
 
+    type latency_data = {
+      start_time : Int64.t; (*nanoseconds*)
+      latency_snapshot : int; (*ms*)
+    }
+
     type bandwidth_data = {
       start_time : Int64.t; (*nanoseconds*)
       packet_size : int;
@@ -494,6 +499,29 @@ module Notty_ui
                          
     module Calc = struct
 
+      let latency acc ((pier, event), elapsed_ns) =
+        match event with
+        | `Roundtrip_start -> 
+          Conn_id_map.update pier.conn_id (function
+            | None ->
+              let start_time = elapsed_ns in 
+              let latency_snapshot = 0 in
+              Some { start_time; latency_snapshot }
+            | Some (data:latency_data) ->
+              let start_time = elapsed_ns in 
+              Some { data with start_time }
+          ) acc
+        | `Roundtrip_end ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> None (*shouldn't happen*)
+            | Some (data:latency_data) ->
+              let roundtrip_ns =
+                Int64.sub elapsed_ns data.start_time |> Int64.to_int in
+              let roundtrip_ms = roundtrip_ns / 1_000_000 in
+              let latency_snapshot = roundtrip_ms / 2 in
+              Some { data with latency_snapshot } 
+          ) acc
+      
       let bandwidth acc (event, elapsed_ns) =
         match event with
         | `Init (pier, packet_size) ->
@@ -520,7 +548,9 @@ module Notty_ui
               Some { data with i; bandwidth_snapshot } 
           ) acc
 
-      let connection_state ~typ ~protocol acc (event, (elapsed_ns, bwm)) =
+      let connection_state ~typ ~protocol
+          acc (event, (elapsed_ns, latencies, bandwidths))
+        =
         match event with
         | `New_connection pier ->
           let start_time = elapsed_ns in 
@@ -546,7 +576,14 @@ module Notty_ui
                 | _ -> conn
               in
               let conn =
-                match Conn_id_map.find_opt pier.conn_id bwm with
+                match Conn_id_map.find_opt pier.conn_id latencies with
+                | None -> conn
+                | Some latency_data ->
+                  let latency = Some latency_data.latency_snapshot in
+                  { conn with latency } (*goo*)
+              in
+              let conn =
+                match Conn_id_map.find_opt pier.conn_id bandwidths with
                 | None -> conn
                 | Some bwm_data ->
                   let packet_size = Some bwm_data.packet_size in
@@ -569,7 +606,24 @@ module Notty_ui
     module Tcp_server = struct
 
       let input_e = Input_event.Listen.Tcp.e 
-      
+
+      let latencies_e =
+        let open Protocol.T in
+        let input_e =
+          input_e
+          |> E.fmap (function
+            | `Sent_packet (pier, Some (`Latency `Pong)) ->
+              Some (pier, `Roundtrip_start)
+            | `Recv_packet (pier, Some (`Latency `Pong)) ->
+              Some (pier, `Roundtrip_end)
+            | _ -> None
+          )
+        in
+        S.sample Tuple.mk2 input_e elapsed_ns_s
+        |> E.fold Calc.latency Conn_id_map.empty
+
+      let latencies_s = S.hold Conn_id_map.empty latencies_e
+
       let bandwidths_e =
         let open Protocol.T in
         let input_e =
@@ -585,15 +639,15 @@ module Notty_ui
         S.sample Tuple.mk2 input_e elapsed_ns_s
         |> E.fold Calc.bandwidth Conn_id_map.empty
 
-      let bandwidths_s =
-        S.hold Conn_id_map.empty bandwidths_e
+      let bandwidths_s = S.hold Conn_id_map.empty bandwidths_e
 
       let connections_e =
         let typ = `Server in
         let protocol = `Tcp in
         let sampled_s =
-          S.l2 Tuple.mk2
+          S.l3 Tuple.mk3
             elapsed_ns_s
+            latencies_s
             bandwidths_s
         in
         S.sample Tuple.mk2 input_e sampled_s
@@ -607,6 +661,23 @@ module Notty_ui
 
       let input_e = Input_event.Connect.Tcp.e 
       
+      let latencies_e =
+        let open Protocol.T in
+        let input_e =
+          input_e
+          |> E.fmap (function
+            | `Sent_packet (pier, Some (`Latency `Ping)) ->
+              Some (pier, `Roundtrip_start)
+            | `Recv_packet (pier, Some (`Latency `Pong)) ->
+              Some (pier, `Roundtrip_end)
+            | _ -> None
+          )
+        in
+        S.sample Tuple.mk2 input_e elapsed_ns_s
+        |> E.fold Calc.latency Conn_id_map.empty
+
+      let latencies_s = S.hold Conn_id_map.empty latencies_e
+
       let bandwidths_e =
         let open Protocol.T in
         let input_e =
@@ -622,15 +693,15 @@ module Notty_ui
         S.sample Tuple.mk2 input_e elapsed_ns_s
         |> E.fold Calc.bandwidth Conn_id_map.empty
 
-      let bandwidths_s =
-        S.hold Conn_id_map.empty bandwidths_e
+      let bandwidths_s = S.hold Conn_id_map.empty bandwidths_e
 
       let connections_e =
         let typ = `Client in
         let protocol = `Tcp in
         let sampled_s =
-          S.l2 Tuple.mk2
+          S.l3 Tuple.mk3
             elapsed_ns_s
+            latencies_s
             bandwidths_s
         in
         S.sample Tuple.mk2 input_e sampled_s
@@ -673,6 +744,13 @@ module Notty_ui
             Fmt.str "%dh%dm%ds" h m s
         in
         make_column "uptime" @@ I.string uptime_str
+      and latency_i =
+        let latency_str =
+          match conn.latency with
+          | None -> "N/A"
+          | Some latency -> Fmt.str "%dms" latency
+        in
+        make_column "lat" @@ I.string latency_str
       and bandwidth_i =
         let bandwidth_str =
           match conn.bandwidth with
@@ -691,6 +769,7 @@ module Notty_ui
           uptime_i;
           sent_packages_i;
           recv_packages_i;
+          latency_i;
           bandwidth_i;
         ];
       ]
