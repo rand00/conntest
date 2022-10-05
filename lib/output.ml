@@ -262,7 +262,11 @@ module Notty_ui
     let fps = 60. 
     let fps_sleep_ns = 1e9 /. fps 
 
+    let fast_fps_sleep_ns = 1e3 (*microsecond precision*)
+
     let e, eupd = E.create ()
+
+    let e_fast, e_fast_upd = E.create ()
 
     let loop_feed () =
       let rec aux i =
@@ -272,9 +276,21 @@ module Notty_ui
       in
       aux 0
 
+    let loop_feed_fast () =
+      let rec aux i =
+        e_fast_upd i;
+        Time.sleep_ns @@ Int64.of_float fast_fps_sleep_ns >>= fun () ->
+        aux @@ succ i
+      in
+      aux 0
+    
   end
 
-  let init () = Tick.loop_feed ()
+  let init () =
+    Lwt.choose [
+      Tick.loop_feed ();
+      Tick.loop_feed_fast ();
+    ]
 
   (*goto move these types out to other file*)
 
@@ -335,7 +351,7 @@ module Notty_ui
         sent_packets : int;
         received_packets : int;
         retries : int option;
-        latency : int option; (*ms*)
+        latency : Int64.t option; (*ns*)
         bandwidth : float option; (*MB/sec*)
         packet_size : int option; (*bytes*)
         (* lost_packets : int option; *)
@@ -370,7 +386,7 @@ module Notty_ui
     S.create Args.term_dimensions
 
   let elapsed_ns_s =
-    Tick.e
+    Tick.e_fast
     |> E.map (fun _ -> Clock.elapsed_ns ())
     |> S.hold 0L
 
@@ -485,13 +501,13 @@ module Notty_ui
 
     type latency_data = {
       start_time : Int64.t; (*nanoseconds*)
-      latency_snapshot : int; (*ms*)
+      latency_snapshot : Int64.t option; (*nanoseconds*)
     }
 
     type bandwidth_data = {
       start_time : Int64.t; (*nanoseconds*)
       packet_size : int;
-      bandwidth_snapshot : float; (*MB/sec*)
+      bandwidth_snapshot : float option; (*MB/sec*)
       i : int;
     }
 
@@ -499,13 +515,14 @@ module Notty_ui
                          
     module Calc = struct
 
+      (*> goto should maybe remove state when connection closes*)
       let latency acc ((pier, event), elapsed_ns) =
         match event with
         | `Roundtrip_start -> 
           Conn_id_map.update pier.conn_id (function
             | None ->
               let start_time = elapsed_ns in 
-              let latency_snapshot = 0 in
+              let latency_snapshot = None in
               Some { start_time; latency_snapshot }
             | Some (data:latency_data) ->
               let start_time = elapsed_ns in 
@@ -515,13 +532,16 @@ module Notty_ui
           Conn_id_map.update pier.conn_id (function
             | None -> None (*shouldn't happen*)
             | Some (data:latency_data) ->
-              let roundtrip_ns =
-                Int64.sub elapsed_ns data.start_time |> Int64.to_int in
-              let roundtrip_ms = roundtrip_ns / 1_000_000 in
-              let latency_snapshot = roundtrip_ms / 2 in
+              let roundtrip_ns = Int64.sub elapsed_ns data.start_time in
+              let half_roundtrip_ns =
+                Int64.to_float roundtrip_ns /. 2.
+                |> Int64.of_float
+              in
+              let latency_snapshot = Some half_roundtrip_ns in
               Some { data with latency_snapshot } 
           ) acc
       
+      (*> goto should maybe remove state when connection closes*)
       let bandwidth acc (event, elapsed_ns) =
         match event with
         | `Init (pier, packet_size) ->
@@ -529,7 +549,7 @@ module Notty_ui
           Conn_id_map.update pier.conn_id (function
             | None ->
               let i = 0
-              and bandwidth_snapshot = 0. in
+              and bandwidth_snapshot = None in
               Some { start_time; packet_size; i; bandwidth_snapshot }
             | Some data ->
               let i = 0 in
@@ -543,7 +563,7 @@ module Notty_ui
               let bandwidth_snapshot =
                 let mbytes_xfr = float (data.packet_size * i) /. 1e6 in
                 let secs = sec_of_ns Int64.(sub elapsed_ns data.start_time) in
-                mbytes_xfr /. secs
+                Some (mbytes_xfr /. secs)
               in
               Some { data with i; bandwidth_snapshot } 
           ) acc
@@ -575,19 +595,21 @@ module Notty_ui
                   { conn with pier_name }
                 | _ -> conn
               in
+              (*> goto optimization: could avoid these updates on general packets,
+                  .. and only on certain events instead*)
               let conn =
                 match Conn_id_map.find_opt pier.conn_id latencies with
                 | None -> conn
                 | Some latency_data ->
-                  let latency = Some latency_data.latency_snapshot in
-                  { conn with latency } (*goo*)
+                  let latency = latency_data.latency_snapshot in
+                  { conn with latency } 
               in
               let conn =
                 match Conn_id_map.find_opt pier.conn_id bandwidths with
                 | None -> conn
                 | Some bwm_data ->
                   let packet_size = Some bwm_data.packet_size in
-                  let bandwidth = Some bwm_data.bandwidth_snapshot
+                  let bandwidth = bwm_data.bandwidth_snapshot
                   in
                   { conn with packet_size; bandwidth }
               in
@@ -748,7 +770,13 @@ module Notty_ui
         let latency_str =
           match conn.latency with
           | None -> "N/A"
-          | Some latency -> Fmt.str "%dms" latency
+          | Some latency ->
+            if latency > 2_000_000L then
+              Fmt.str "%Ldms" Int64.(div latency 1_000_000L)
+            else if latency > 2_000L then
+              Fmt.str "%Ldμs" Int64.(div latency 1_000L)
+            else 
+              Fmt.str "%Ldns" latency
         in
         make_column "lat" @@ I.string latency_str
       and bandwidth_i =
