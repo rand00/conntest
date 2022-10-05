@@ -262,11 +262,7 @@ module Notty_ui
     let fps = 60. 
     let fps_sleep_ns = 1e9 /. fps 
 
-    let fast_fps_sleep_ns = 1e3 (*microsecond precision*)
-
     let e, eupd = E.create ()
-
-    let e_fast, e_fast_upd = E.create ()
 
     let loop_feed () =
       let rec aux i =
@@ -275,22 +271,10 @@ module Notty_ui
         aux @@ succ i
       in
       aux 0
-
-    let loop_feed_fast () =
-      let rec aux i =
-        e_fast_upd i;
-        Time.sleep_ns @@ Int64.of_float fast_fps_sleep_ns >>= fun () ->
-        aux @@ succ i
-      in
-      aux 0
     
   end
 
-  let init () =
-    Lwt.choose [
-      Tick.loop_feed ();
-      Tick.loop_feed_fast ();
-    ]
+  let init () = Tick.loop_feed ()
 
   (*goto move these types out to other file*)
 
@@ -384,11 +368,6 @@ module Notty_ui
 
   let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
     S.create Args.term_dimensions
-
-  let elapsed_ns_s =
-    Tick.e_fast
-    |> E.map (fun _ -> Clock.elapsed_ns ())
-    |> S.hold 0L
 
   (*goto maybe put S on via mli*)
   module Input_event (* : S *) = struct
@@ -516,7 +495,8 @@ module Notty_ui
     module Calc = struct
 
       (*> goto should maybe remove state when connection closes*)
-      let latency acc ((pier, event), elapsed_ns) =
+      let latency acc (pier, event) =
+        let elapsed_ns = Clock.elapsed_ns () in
         match event with
         | `Roundtrip_start -> 
           Conn_id_map.update pier.conn_id (function
@@ -542,7 +522,8 @@ module Notty_ui
           ) acc
       
       (*> goto should maybe remove state when connection closes*)
-      let bandwidth acc (event, elapsed_ns) =
+      let bandwidth acc event =
+        let elapsed_ns = Clock.elapsed_ns () in
         match event with
         | `Init (pier, packet_size) ->
           let start_time = elapsed_ns in 
@@ -569,8 +550,9 @@ module Notty_ui
           ) acc
 
       let connection_state ~typ ~protocol
-          acc (event, (elapsed_ns, latencies, bandwidths))
+          acc (event, (latencies, bandwidths))
         =
+        let elapsed_ns = Clock.elapsed_ns () in
         match event with
         | `New_connection pier ->
           let start_time = elapsed_ns in 
@@ -641,7 +623,7 @@ module Notty_ui
             | _ -> None
           )
         in
-        S.sample Tuple.mk2 input_e elapsed_ns_s
+        input_e
         |> E.fold Calc.latency Conn_id_map.empty
 
       let latencies_s = S.hold Conn_id_map.empty latencies_e
@@ -658,7 +640,7 @@ module Notty_ui
             | _ -> None
           )
         in
-        S.sample Tuple.mk2 input_e elapsed_ns_s
+        input_e
         |> E.fold Calc.bandwidth Conn_id_map.empty
 
       let bandwidths_s = S.hold Conn_id_map.empty bandwidths_e
@@ -667,8 +649,7 @@ module Notty_ui
         let typ = `Server in
         let protocol = `Tcp in
         let sampled_s =
-          S.l3 Tuple.mk3
-            elapsed_ns_s
+          S.l2 Tuple.mk2
             latencies_s
             bandwidths_s
         in
@@ -695,7 +676,7 @@ module Notty_ui
             | _ -> None
           )
         in
-        S.sample Tuple.mk2 input_e elapsed_ns_s
+        input_e 
         |> E.fold Calc.latency Conn_id_map.empty
 
       let latencies_s = S.hold Conn_id_map.empty latencies_e
@@ -712,7 +693,7 @@ module Notty_ui
             | _ -> None
           )
         in
-        S.sample Tuple.mk2 input_e elapsed_ns_s
+        input_e
         |> E.fold Calc.bandwidth Conn_id_map.empty
 
       let bandwidths_s = S.hold Conn_id_map.empty bandwidths_e
@@ -721,8 +702,7 @@ module Notty_ui
         let typ = `Client in
         let protocol = `Tcp in
         let sampled_s =
-          S.l3 Tuple.mk3
-            elapsed_ns_s
+          S.l2 Tuple.mk2
             latencies_s
             bandwidths_s
         in
@@ -824,8 +804,9 @@ module Notty_ui
       |> I.vcat
     
     let render_connections
-        (this_name, (term_w, term_h), elapsed_ns, server_conns, client_conns)
+        (this_name, (term_w, term_h), server_conns, client_conns)
       =
+      let elapsed_ns = Clock.elapsed_ns () in
       let server_conns = Conn_id_map.bindings server_conns
       and client_conns = Conn_id_map.bindings client_conns
       in
@@ -864,10 +845,9 @@ module Notty_ui
       |> I.vcat 
     
     let image_s =
-      S.l5 Tuple.mk5
+      S.l4 Tuple.mk4
         name_s
         term_dimensions_s
-        elapsed_ns_s
         Data.Tcp_server.connections_s
         Data.Tcp_client.connections_s
       |> S.map render_connections
