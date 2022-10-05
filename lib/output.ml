@@ -427,13 +427,22 @@ module Notty_ui
 
       module Tcp = struct
 
-        (* let e, eupd = E.create () *)
+        (*goto make (sub)type common for server/client?*)
+        type event = [
+          | `New_connection of Pier.t
+          | `Closing_connection of Pier.t
+          (* | `Error of (Pier.t * string) *)
+          | `Recv_packet of (Pier.t * Protocol.t option)
+          | `Sent_packet of (Pier.t * Protocol.t option)
+        ]
+        
+        let (e : event E.t), eupd = E.create ()
 
         let connecting ~conn_id:_ ~ip ~port =
           () (*goto*)
 
-        let connected ~conn_id:_ ~ip ~port =
-          () (*goto*)
+        let connected ~conn_id ~ip ~port =
+          eupd @@ `New_connection {ip; port; conn_id}
 
         let writing ~conn_id:_ ~ip ~port ~data =
           () (*goto*)
@@ -447,14 +456,14 @@ module Notty_ui
         let error_reading ~conn_id:_ ~ip ~port ~err =
           () (*goto*)
 
-        let received_packet ~conn_id:_ ~ip ~port ~header ~protocol  = 
-          () (*goto*)
+        let received_packet ~conn_id ~ip ~port ~header ~protocol  = 
+          eupd @@ `Recv_packet ({ip; port; conn_id}, protocol)
 
-        let sent_packet ~conn_id:_ ~ip ~port ~header ~protocol = 
-          () (*goto*)
+        let sent_packet ~conn_id ~ip ~port ~header ~protocol = 
+          eupd @@ `Sent_packet ({ip; port; conn_id}, protocol)
 
-        let closing_flow ~conn_id:_ ~ip ~port =
-          () (*goto*)
+        let closing_flow ~conn_id ~ip ~port =
+          eupd @@ `Closing_connection {ip; port; conn_id}
 
         let closed_flow ~conn_id:_ ~ip ~port =
           () (*goto*)
@@ -558,11 +567,13 @@ module Notty_ui
     end
     
     module Tcp_server = struct
+
+      let input_e = Input_event.Listen.Tcp.e 
       
       let bandwidths_e =
         let open Protocol.T in
         let input_e =
-          Input_event.Listen.Tcp.e
+          input_e
           |> E.fmap (function
             | `Recv_packet (pier, Some (`Bandwidth ({direction = `Up} as b))) ->
               Some (`Init (pier, b.packet_size))
@@ -585,14 +596,49 @@ module Notty_ui
             elapsed_ns_s
             bandwidths_s
         in
-        S.sample Tuple.mk2 Input_event.Listen.Tcp.e sampled_s
+        S.sample Tuple.mk2 input_e sampled_s
         |> E.fold (Calc.connection_state ~typ ~protocol) Conn_id_map.empty
 
       let connections_s = S.hold Conn_id_map.empty connections_e
 
     end
 
-    let connections_s = Tcp_server.connections_s
+    module Tcp_client = struct
+
+      let input_e = Input_event.Connect.Tcp.e 
+      
+      let bandwidths_e =
+        let open Protocol.T in
+        let input_e =
+          input_e
+          |> E.fmap (function
+            | `Sent_packet (pier, Some (`Bandwidth ({direction = `Down} as b))) ->
+              Some (`Init (pier, b.packet_size))
+            | `Recv_packet (pier, None) ->
+              Some (`Packet pier)
+            | _ -> None
+          )
+        in
+        S.sample Tuple.mk2 input_e elapsed_ns_s
+        |> E.fold Calc.bandwidth Conn_id_map.empty
+
+      let bandwidths_s =
+        S.hold Conn_id_map.empty bandwidths_e
+
+      let connections_e =
+        let typ = `Client in
+        let protocol = `Tcp in
+        let sampled_s =
+          S.l2 Tuple.mk2
+            elapsed_ns_s
+            bandwidths_s
+        in
+        S.sample Tuple.mk2 input_e sampled_s
+        |> E.fold (Calc.connection_state ~typ ~protocol) Conn_id_map.empty
+
+      let connections_s = S.hold Conn_id_map.empty connections_e
+
+    end
         
   end
   
@@ -670,10 +716,11 @@ module Notty_ui
       ]
       |> I.vcat
     
-    let render_connections (this_name, (term_w, term_h), elapsed_ns, conns) =
-      let conns = Conn_id_map.bindings conns in
-      let client_conns, server_conns =
-        List.partition (fun (_, conn) -> conn.typ = `Client) conns
+    let render_connections
+        (this_name, (term_w, term_h), elapsed_ns, server_conns, client_conns)
+      =
+      let server_conns = Conn_id_map.bindings server_conns
+      and client_conns = Conn_id_map.bindings client_conns
       in
       let client_conn_images =
         client_conns |> List.map (render_conn ~term_w ~elapsed_ns) 
@@ -710,11 +757,12 @@ module Notty_ui
       |> I.vcat 
     
     let image_s =
-      S.l4 Tuple.mk4
+      S.l5 Tuple.mk5
         name_s
         term_dimensions_s
         elapsed_ns_s
-        Data.connections_s
+        Data.Tcp_server.connections_s
+        Data.Tcp_client.connections_s
       |> S.map render_connections
 
     let image_e =
