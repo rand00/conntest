@@ -474,65 +474,108 @@ module Notty_ui
 
   module Data = struct
 
-    module Tcp_server = struct
+    type bandwidth_data = {
+      start_time : Int64.t; (*nanoseconds*)
+      packet_size : int;
+      bandwidth_snapshot : float; (*MB/sec*)
+      i : int;
+    }
 
-      type bandwidth_data = {
-        start_time : Int64.t; (*nanoseconds*)
-        packet_size : int;
-        bandwidth_snapshot : float; (*MB/sec*)
-        i : int;
-      }
-      
-      let sec_of_ns ns = Int64.to_float ns /. 1e9
+    let sec_of_ns ns = Int64.to_float ns /. 1e9
                          
-      let connection_bandwidths_e =
+    module Calc = struct
+
+      let bandwidth acc (event, elapsed_ns) =
+        match event with
+        | `Init (pier, packet_size) ->
+          let start_time = elapsed_ns in 
+          Conn_id_map.update pier.conn_id (function
+            | None ->
+              let i = 0
+              and bandwidth_snapshot = 0. in
+              Some { start_time; packet_size; i; bandwidth_snapshot }
+            | Some data ->
+              let i = 0 in
+              Some { data with start_time; packet_size; i } 
+          ) acc
+        | `Packet pier ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> None (*shouldn't happen*)
+            | Some data ->
+              let i = succ data.i in
+              let bandwidth_snapshot =
+                let mbytes_xfr = float (data.packet_size * i) /. 1e6 in
+                let secs = sec_of_ns Int64.(sub elapsed_ns data.start_time) in
+                mbytes_xfr /. secs
+              in
+              Some { data with i; bandwidth_snapshot } 
+          ) acc
+
+      let connection_state ~typ ~protocol acc (event, (elapsed_ns, bwm)) =
+        match event with
+        | `New_connection pier ->
+          let start_time = elapsed_ns in 
+          let conn = Connection.make ~typ ~protocol ~start_time ~pier in
+          acc |> Conn_id_map.add pier.conn_id conn
+        | `Closing_connection pier ->
+          Conn_id_map.remove pier.conn_id acc
+        | `Error (pier, _err) ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> None
+            | Some conn -> Some { conn with error = true }
+          ) acc
+        | `Recv_packet (pier, protocol) ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> None (*shouldn't happen*)
+            | Some conn ->
+              let received_packets = succ conn.received_packets in
+              let conn = { conn with received_packets } in
+              let conn = match protocol with
+                | Some (`Hello info) ->
+                  let pier_name = Some info.Protocol.T.name in
+                  { conn with pier_name }
+                | _ -> conn
+              in
+              let conn =
+                match Conn_id_map.find_opt pier.conn_id bwm with
+                | None -> conn
+                | Some bwm_data ->
+                  let packet_size = Some bwm_data.packet_size in
+                  let bandwidth = Some bwm_data.bandwidth_snapshot
+                  in
+                  { conn with packet_size; bandwidth }
+              in
+              Some conn
+          ) acc
+        | `Sent_packet (pier, protocol) ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> None (*shouldn't happen*)
+            | Some conn ->
+              let sent_packets = succ conn.sent_packets in
+              Some { conn with sent_packets }
+          ) acc
+
+    end
+    
+    module Tcp_server = struct
+      
+      let bandwidths_e =
         let open Protocol.T in
         let input_e =
           Input_event.Listen.Tcp.e
           |> E.fmap (function
-            | `Recv_packet (pier, Some (
-              `Bandwidth ({direction = `Up} as bwm))) ->
-              Some (`Up_init (pier, bwm.packet_size))
+            | `Recv_packet (pier, Some (`Bandwidth ({direction = `Up} as b))) ->
+              Some (`Init (pier, b.packet_size))
             | `Recv_packet (pier, None) ->
-              Some (`Up_packet pier)
-            (*> goto choose if bwm column is shown for both up/down @ server info*)
-            (* | `Recv_packet (pier, Some (
-             *   `Bandwidth ({direction = `Down} as bwm))) ->
-             *   Some (`Down_init (pier, bwm.packet_size))
-             * | `Sent_packet (pier, None) ->
-             *   Some (`Down_packet pier) *)
+              Some (`Packet pier)
             | _ -> None
           )
         in
         S.sample Tuple.mk2 input_e elapsed_ns_s
-        |> E.fold (fun acc (event, elapsed_ns) -> match event with
-          | `Up_init (pier, packet_size) ->
-            let start_time = elapsed_ns in 
-            Conn_id_map.update pier.conn_id (function
-              | None ->
-                let i = 0
-                and bandwidth_snapshot = 0. in
-                Some { start_time; packet_size; i; bandwidth_snapshot }
-              | Some data ->
-                let i = 0 in
-                Some { data with start_time; packet_size; i } 
-            ) acc
-          | `Up_packet pier ->
-            Conn_id_map.update pier.conn_id (function
-              | None -> None (*shouldn't happen*)
-              | Some data ->
-                let i = succ data.i in
-                let bandwidth_snapshot =
-                  let mbytes_xfr = float (data.packet_size * i) /. 1e6 in
-                  let secs = sec_of_ns Int64.(sub elapsed_ns data.start_time) in
-                  mbytes_xfr /. secs
-                in
-                Some { data with i; bandwidth_snapshot } 
-            ) acc
-        ) Conn_id_map.empty
+        |> E.fold Calc.bandwidth Conn_id_map.empty
 
-      let connection_bandwidths_s =
-        S.hold Conn_id_map.empty connection_bandwidths_e
+      let bandwidths_s =
+        S.hold Conn_id_map.empty bandwidths_e
 
       let connections_e =
         let typ = `Server in
@@ -540,53 +583,10 @@ module Notty_ui
         let sampled_s =
           S.l2 Tuple.mk2
             elapsed_ns_s
-            connection_bandwidths_s
+            bandwidths_s
         in
         S.sample Tuple.mk2 Input_event.Listen.Tcp.e sampled_s
-        |> E.fold (fun acc (event, (elapsed_ns, bwm)) ->
-          match event with
-          | `New_connection pier ->
-            let start_time = elapsed_ns in 
-            let conn = Connection.make ~typ ~protocol ~start_time ~pier in
-            acc |> Conn_id_map.add pier.conn_id conn
-          | `Closing_connection pier ->
-            Conn_id_map.remove pier.conn_id acc
-          | `Error (pier, _err) ->
-            Conn_id_map.update pier.conn_id (function
-              | None -> None
-              | Some conn -> Some { conn with error = true }
-            ) acc
-          | `Recv_packet (pier, protocol) ->
-            Conn_id_map.update pier.conn_id (function
-              | None -> None (*shouldn't happen*)
-              | Some conn ->
-                let received_packets = succ conn.received_packets in
-                let conn = { conn with received_packets } in
-                let conn = match protocol with
-                  | Some (`Hello info) ->
-                    let pier_name = Some info.Protocol.T.name in
-                    { conn with pier_name }
-                  | _ -> conn
-                in
-                let conn =
-                  match Conn_id_map.find_opt pier.conn_id bwm with
-                  | None -> conn
-                  | Some bwm_data ->
-                    let packet_size = Some bwm_data.packet_size in
-                    let bandwidth = Some bwm_data.bandwidth_snapshot
-                    in
-                    { conn with packet_size; bandwidth }
-                in
-                Some conn
-            ) acc
-          | `Sent_packet (pier, protocol) ->
-            Conn_id_map.update pier.conn_id (function
-              | None -> None (*shouldn't happen*)
-              | Some conn ->
-                let sent_packets = succ conn.sent_packets in
-                Some { conn with sent_packets }
-            ) acc
-        ) Conn_id_map.empty
+        |> E.fold (Calc.connection_state ~typ ~protocol) Conn_id_map.empty
 
       let connections_s = S.hold Conn_id_map.empty connections_e
 
