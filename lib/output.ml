@@ -759,6 +759,20 @@ module Notty_ui
               Fmt.str "%Ldns" latency
         in
         make_column "lat" @@ I.string latency_str
+      and packet_size_i =
+        let str =
+          match conn.packet_size with
+          | None -> "N/A"
+          | Some v ->
+            let v = float v in
+            if v > 1e6 then
+              Fmt.str "%.0fMB" @@ v /. 1e6
+            else if v > 1e3 then
+              Fmt.str "%.0fKB" @@ v /. 1e3
+            else 
+              Fmt.str "%.0fB" v
+        in
+        make_column "p-size" @@ I.string str
       and bandwidth_i =
         let bandwidth_str =
           match conn.bandwidth with
@@ -779,6 +793,7 @@ module Notty_ui
           recv_packages_i;
           latency_i;
           bandwidth_i;
+          packet_size_i;
         ];
       ]
       |> List.flatten
