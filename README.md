@@ -4,27 +4,43 @@ A MirageOS unikernel that acts as a client and server to
 other instances of itself, either via `TCP` or `UDP`. You specify 
 which ports to listen/connect to, and which stats to collect. It automatically 
 reconnects when the connection is lost, so you can e.g. take down an instance 
-and reconfigure it via CLI.
+and reconfigure it via CLI. 
+
+An important aspect is that each `conntest` unikernel is connected via a single
+connection only - which is used in turn for the different tests. This allows you
+to simulate how your production-unikernels will be connected.
 
 ### Usecases
 * Testing that your networking setup works - e.g. when you use  bridges, 
   `TAP` devices, `NAT`, firewall rules etc.
 * Testing the connection-stats between different servers, MirageOS compilation-targets 
   and network-stacks.
-  * This can e.g. be useful if you plan to rearrange where/how your unikernel instances are run.
+  * This can e.g. be useful:
+    * if you plan to rearrange where/how your unikernel instances are run
+    * if you compare performance of different backends
 * Stress-testing connections by sending lots of data to/from several instances
   at the same time.
 * Playing around with distributed unikernel setups.
 
-### Work in progress
-* Full `UDP` support - `TCP` will be done first
-* A `notty` CLI UI (via `mirage-console`) listing connections and their stats
-  * But having the possibility of choosing a simple logging output 
+### Features
+* Connect with as many `conntest` servers/clients as you want.
+* `TCP` protocol supported, with custom packet format.
+* Live updated CLI output via the `notty` library.
+* Enable/disable (two-way) bandwidth-monitoring per connection.
+* Choose packet-size when bandwidth-monitoring.
+* Latency monitoring (calculated as half the roundtrip time).
+* Choose between other CLI UIs - currently `notty` and `log` 
+  (`log` doesn't show stats for now, just logs packets).
+
+### To do
+* `UDP` support
 * Show stats:
-  * bandwidth 
-  * latency
   * lost packets (`UDP`)
   * packets out of order (`UDP`)
+* Show stats via alternative simple textual output. This is useful if you run your unikernel 
+  via e.g. `albatross` which currently splits console output on newlines.
+* (maybe) Add structured data logging output, which can be used to graph the stats after running.
+  If this feature is useful to you, make an issue, and we'll discuss how this should work.
 
 ### Suggest features!
 If you find this unikernel useful, but it's e.g. missing some stats that you are interested in - then make an issue/PR (: 
