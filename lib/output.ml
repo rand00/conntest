@@ -751,12 +751,15 @@ module Notty_ui
           match conn.latency with
           | None -> "N/A"
           | Some latency ->
-            if latency > 2_000_000L then
-              Fmt.str "%Ldms" Int64.(div latency 1_000_000L)
-            else if latency > 2_000L then
-              Fmt.str "%Ldμs" Int64.(div latency 1_000L)
+            let latency = Int64.to_float latency in
+            if latency > 1e9 then
+              Fmt.str "%.1fs" @@ latency /. 1e9
+            else if latency > 1e6 then
+              Fmt.str "%.0fms" @@ latency /. 1e6
+            else if latency > 1e3 then
+              Fmt.str "%.0fμs" @@ latency /. 1e3
             else 
-              Fmt.str "%Ldns" latency
+              Fmt.str "%.0fns" latency
         in
         make_column "lat" @@ I.string latency_str
       and packet_size_i =
