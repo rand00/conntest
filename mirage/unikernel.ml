@@ -174,7 +174,7 @@ module Main
           caused by parsing of CLI args*)
       exit 64
 
-  let render_ui ~init ~image_e ~console ~init_size () =
+  let render_ui ~init ~image_e ~dimensions_e ~console ~init_size () =
     let open Lwt.Infix in
     Notty_term.create ~init_size console >>= function
     | Error _ ->
@@ -191,6 +191,9 @@ module Main
           | Ok () -> ()
           | Error _ -> Logs.err (fun m -> m "ERROR: render notty ui")
           (*< goto should always handle errors via Ui module*)
+        ) |> Lwt_react.E.keep;
+        dimensions_e |> Lwt_react.E.map (fun dims ->
+          Notty_term.set_size term dims
         ) |> Lwt_react.E.keep;
         init ()
       end
@@ -216,6 +219,7 @@ module Main
         Lwt.async @@ render_ui
           ~init:Ui.init
           ~image_e:Ui.image_e
+          ~dimensions_e:Ui.Render.dimensions_e
           ~console
           ~init_size:term_dimensions;
         (module Ui.Input_event : Conntest.Output.S)

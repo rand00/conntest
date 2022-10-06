@@ -83,8 +83,7 @@ let packages = [
 
 module Notty_dev = struct
 
-  (*>goto pass packages_v + connect?*)
-  
+  (*> goto are all these packages needed?*)
   type notty_link = NOTTY_LINK
   let term_link_typ = Type.v NOTTY_LINK
   let term_link =

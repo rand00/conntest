@@ -873,6 +873,11 @@ module Notty_ui
     let image_e =
       image_s |> S.sample (fun _ image -> image) Tick.e
 
+    let dimensions_s =
+      image_s |> S.map (fun image -> I.width image, I.height image)
+
+    let dimensions_e = S.changes dimensions_s
+    
   end
 
   let image_e = Render.image_e
