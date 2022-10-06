@@ -243,7 +243,7 @@ end
 module type NOTTY_UI_ARGS = sig
 
   val name : string
-  val term_dimensions : int * int 
+  (* val term_dimensions : int * int  *)
 
 end
 
@@ -366,8 +366,8 @@ module Notty_ui
 
   let (name_s : string S.t), name_supd = S.create Args.name
 
-  let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
-    S.create Args.term_dimensions
+  (* let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
+   *   S.create Args.term_dimensions *)
 
   (*goto maybe put S on via mli*)
   module Input_event (* : S *) = struct
@@ -809,44 +809,60 @@ module Notty_ui
         Ipaddr.pp conn.pier.Pier.ip
         conn.pier.Pier.port
       |> I.vpad 0 1
+
+    let render_sep ~w = I.string (String.make w '-') 
     
-    let render_conn ~term_w ~elapsed_ns (_id, conn) =
+    let render_conn ~elapsed_ns (_id, conn) =
       let pier_i = render_pier conn in
       let table_i = render_table elapsed_ns conn in
-      let sep_i = I.string (String.make term_w '-') in
       [
         pier_i;
         table_i;
-        sep_i;
       ]
       |> I.vcat
     
-    let render_connections
-        (this_name, (term_w, term_h), server_conns, client_conns)
-      =
+    let render_connections (this_name, server_conns, client_conns) =
       let elapsed_ns = Clock.elapsed_ns () in
       let server_conns = Conn_id_map.bindings server_conns
       and client_conns = Conn_id_map.bindings client_conns
       in
+      (*> goto intersperse with separators*)
       let client_conn_images =
-        client_conns |> List.map (render_conn ~term_w ~elapsed_ns) 
+        client_conns |> List.map (render_conn ~elapsed_ns)
       and server_conn_images =
-        server_conns |> List.map (render_conn ~term_w ~elapsed_ns)
-      and name_i =
+        server_conns |> List.map (render_conn ~elapsed_ns)
+      in
+      let width =
+        (client_conn_images @ server_conn_images)
+        |> List.fold_left (fun max_w image ->
+          Int.max max_w @@ I.width image
+        ) 0
+      in
+      let sep_i = render_sep ~w:width in
+      let client_conn_images =
+        client_conn_images |> List.map (fun conn_image ->
+          I.(conn_image <-> sep_i)
+        ) 
+      and server_conn_images =
+        server_conn_images |> List.map (fun conn_image ->
+          I.(conn_image <-> sep_i)
+        ) 
+      in
+      let name_i =
         this_name
         |> I.string 
-        |> I.hsnap ~align:`Middle term_w in
+        |> I.hsnap ~align:`Middle width in
       let client_conns_name_i =
         [
-          I.string " As client " |> I.hsnap ~align:`Middle term_w;
-          I.string (String.make term_w '-');
+          I.string " As client " |> I.hsnap ~align:`Middle width;
+          I.string (String.make width '-');
         ]
         |> I.zcat
       in
       let server_conns_name_i =
         [
-          I.string " As server " |> I.hsnap ~align:`Middle term_w;
-          I.string (String.make term_w '-');
+          I.string " As server " |> I.hsnap ~align:`Middle width;
+          I.string (String.make width '-');
         ]
         |> I.zcat
       in
@@ -863,9 +879,8 @@ module Notty_ui
       |> I.vcat 
     
     let image_s =
-      S.l4 Tuple.mk4
+      S.l3 Tuple.mk3
         name_s
-        term_dimensions_s
         Data.Tcp_server.connections_s
         Data.Tcp_client.connections_s
       |> S.map render_connections

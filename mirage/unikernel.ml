@@ -213,7 +213,7 @@ module Main
       | `Notty ->
         let module Ui = Conntest.Output.Notty_ui(Time)(Clock)(struct
           let name = name
-          let term_dimensions = term_dimensions
+          (* let term_dimensions = term_dimensions *)
         end)
         in
         Lwt.async @@ render_ui
