@@ -196,7 +196,7 @@ module Main
       end
   
   let start console _notty _time _clock stack =
-    let term_dimensions = 70, 15 in
+    let term_dimensions = 50, 25 in
     let name = Key_gen.name () in
     let ui_key = match Key_gen.ui () with
       | "notty" -> `Notty
