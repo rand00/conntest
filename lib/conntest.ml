@@ -352,13 +352,13 @@ module Make
           } in
           let protocol = `Latency `Pong in
           let* ctx = write_packet ~ctx ~header ~protocol in
-          let conn_state =
-            if monitor_bandwidth#enabled then 
-              `Bandwidth `Up
-            else
-              `Latency
-          in
-          write_more ~ctx ~conn_state
+          if monitor_bandwidth#enabled then 
+            let conn_state = `Bandwidth `Up in
+            write_more ~ctx ~conn_state
+          else
+            let conn_state = `Latency in
+            Time.sleep_ns @@ ns_of_sec (1. /. 2.) >>= fun () ->
+            write_more ~ctx ~conn_state
         | `Bandwidth (`Up as direction) ->
           let n_packets = n_bandwidth_packets in
           let protocol = `Bandwidth Protocol.T.{
