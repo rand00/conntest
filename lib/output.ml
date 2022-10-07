@@ -633,7 +633,8 @@ module Notty_ui
         let input_e =
           input_e
           |> E.fmap (function
-            | `Recv_packet (pier, Some (`Bandwidth ({direction = `Up} as b))) ->
+            | `Recv_packet (pier, Some (`Bandwidth (
+              { direction = `Up; _} as b))) ->
               Some (`Init (pier, b.packet_size))
             | `Recv_packet (pier, None) ->
               Some (`Packet pier)
@@ -686,7 +687,8 @@ module Notty_ui
         let input_e =
           input_e
           |> E.fmap (function
-            | `Sent_packet (pier, Some (`Bandwidth ({direction = `Down} as b))) ->
+            | `Sent_packet (pier, Some (`Bandwidth (
+              {direction = `Down; _} as b))) ->
               Some (`Init (pier, b.packet_size))
             | `Recv_packet (pier, None) ->
               Some (`Packet pier)
