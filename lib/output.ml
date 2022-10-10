@@ -247,6 +247,101 @@ module type NOTTY_UI_ARGS = sig
 
 end
 
+(*goto move these types out to other file?*)
+module Eq = struct
+
+  let never _ _ = false
+  let always _ _ = true 
+
+end
+
+(*goto move these types out to other file?*)
+module Tuple = struct
+
+  let mk2 v0 v1 = v0, v1
+  let mk3 v0 v1 v2 = v0, v1, v2
+  let mk4 v0 v1 v2 v3 = v0, v1, v2, v3
+  let mk5 v0 v1 v2 v3 v4 = v0, v1, v2, v3, v4
+
+end
+
+module Conn_id = struct
+
+  module T = struct
+
+    type t = string
+
+  end
+  include T
+
+  let compare = String.compare
+
+end
+
+module Conn_id_map = Map.Make(Conn_id)
+
+module Pier = struct
+
+  module T = struct 
+
+    type t = {
+      ip : Ipaddr.t;
+      port : int;
+      conn_id : Conn_id.t;
+      (*< Note: this is the local id
+        - the conn-id sent via header is for sending back*)
+    }
+
+  end
+  include T
+
+end
+
+module Connection = struct
+
+  module T = struct 
+
+    type id = Uuidm.t
+
+    type t = {
+      typ : [ `Client | `Server ];
+      pier : Pier.t;
+      pier_name : string option;
+      protocol : [ `Tcp | `Udp ];
+      start_time : Int64.t; (*arbitrary startpoint in nanoseconds*)
+      error : bool;
+      sent_packets : int;
+      received_packets : int;
+      retries : int option;
+      latency : Int64.t option; (*ns*)
+      bandwidth : float option; (*MB/sec*)
+      packet_size : int option; (*bytes*)
+      (* lost_packets : int option; *)
+      (* out_of_order_packets : int option; *)
+    }
+
+  end
+  include T
+
+  let make ~typ ~protocol ~start_time ~pier = {
+    typ;
+    protocol;
+    start_time;
+    pier;
+    error = false;
+    pier_name = None;
+    sent_packets = 0;
+    received_packets = 0;
+    retries = None;
+    latency = None;
+    bandwidth = None;
+    packet_size = None;
+  }
+
+end
+open Connection.T
+open Pier.T
+
 (*> goto make this fit S signature, or inner module?*)
 module Notty_ui
     (Time : Mirage_time.S)
@@ -275,94 +370,6 @@ module Notty_ui
   end
 
   let init () = Tick.loop_feed ()
-
-  (*goto move these types out to other file*)
-
-  module Tuple = struct
-
-    let mk2 v0 v1 = v0, v1
-    let mk3 v0 v1 v2 = v0, v1, v2
-    let mk4 v0 v1 v2 v3 = v0, v1, v2, v3
-    let mk5 v0 v1 v2 v3 v4 = v0, v1, v2, v3, v4
-
-  end
-  
-  module Conn_id = struct
-
-    module T = struct
-
-      type t = string
-      
-    end
-    include T
-
-    let compare = String.compare
-    
-  end
-  
-  module Conn_id_map = Map.Make(Conn_id)
-
-  module Pier = struct
-
-    module T = struct 
-
-      type t = {
-        ip : Ipaddr.t;
-        port : int;
-        conn_id : Conn_id.t;
-        (*< Note: this is the local id
-          - the conn-id sent via header is for sending back*)
-      }
-      
-    end
-    include T
-
-  end
-
-  module Connection = struct
-
-    module T = struct 
-
-      type id = Uuidm.t
-
-      type t = {
-        typ : [ `Client | `Server ];
-        pier : Pier.t;
-        pier_name : string option;
-        protocol : [ `Tcp | `Udp ];
-        start_time : Int64.t; (*arbitrary startpoint in nanoseconds*)
-        error : bool;
-        sent_packets : int;
-        received_packets : int;
-        retries : int option;
-        latency : Int64.t option; (*ns*)
-        bandwidth : float option; (*MB/sec*)
-        packet_size : int option; (*bytes*)
-        (* lost_packets : int option; *)
-        (* out_of_order_packets : int option; *)
-      }
-
-    end
-    include T
-
-    let make ~typ ~protocol ~start_time ~pier = {
-      typ;
-      protocol;
-      start_time;
-      pier;
-      error = false;
-      pier_name = None;
-      sent_packets = 0;
-      received_packets = 0;
-      retries = None;
-      latency = None;
-      bandwidth = None;
-      packet_size = None;
-    }
-    
-  end
-  open Connection.T
-  open Pier.T
 
   let (name_s : string S.t), name_supd = S.create Args.name
 
@@ -626,7 +633,7 @@ module Notty_ui
         input_e
         |> E.fold Calc.latency Conn_id_map.empty
 
-      let latencies_s = S.hold Conn_id_map.empty latencies_e
+      let latencies_s = S.hold ~eq:Eq.never Conn_id_map.empty latencies_e
 
       let bandwidths_e =
         let open Protocol.T in
@@ -644,20 +651,20 @@ module Notty_ui
         input_e
         |> E.fold Calc.bandwidth Conn_id_map.empty
 
-      let bandwidths_s = S.hold Conn_id_map.empty bandwidths_e
+      let bandwidths_s = S.hold ~eq:Eq.never Conn_id_map.empty bandwidths_e
 
       let connections_e =
         let typ = `Server in
         let protocol = `Tcp in
         let sampled_s =
-          S.l2 Tuple.mk2
+          S.l2 ~eq:Eq.never Tuple.mk2
             latencies_s
             bandwidths_s
         in
         S.sample Tuple.mk2 input_e sampled_s
         |> E.fold (Calc.connection_state ~typ ~protocol) Conn_id_map.empty
 
-      let connections_s = S.hold Conn_id_map.empty connections_e
+      let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
 
     end
 
@@ -680,7 +687,7 @@ module Notty_ui
         input_e 
         |> E.fold Calc.latency Conn_id_map.empty
 
-      let latencies_s = S.hold Conn_id_map.empty latencies_e
+      let latencies_s = S.hold ~eq:Eq.never Conn_id_map.empty latencies_e
 
       let bandwidths_e =
         let open Protocol.T in
@@ -698,20 +705,20 @@ module Notty_ui
         input_e
         |> E.fold Calc.bandwidth Conn_id_map.empty
 
-      let bandwidths_s = S.hold Conn_id_map.empty bandwidths_e
+      let bandwidths_s = S.hold ~eq:Eq.never Conn_id_map.empty bandwidths_e
 
       let connections_e =
         let typ = `Client in
         let protocol = `Tcp in
         let sampled_s =
-          S.l2 Tuple.mk2
+          S.l2 ~eq:Eq.never Tuple.mk2
             latencies_s
             bandwidths_s
         in
         S.sample Tuple.mk2 input_e sampled_s
         |> E.fold (Calc.connection_state ~typ ~protocol) Conn_id_map.empty
 
-      let connections_s = S.hold Conn_id_map.empty connections_e
+      let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
 
     end
         
@@ -881,11 +888,11 @@ module Notty_ui
       |> I.vcat 
     
     let image_s =
-      S.l3 Tuple.mk3
+      S.l3 ~eq:Eq.never Tuple.mk3
         name_s
         Data.Tcp_server.connections_s
         Data.Tcp_client.connections_s
-      |> S.map render_connections
+      |> S.map ~eq:Eq.never render_connections
 
     let image_e =
       image_s |> S.sample (fun _ image -> image) Tick.e
