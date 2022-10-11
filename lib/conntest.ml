@@ -182,7 +182,6 @@ module Make
               handle_packet ~ctx ~packet ~more_data
           end
         | `Latency `Ping ->
-          (*> goto write this proc more like Connect.tcp - seems cleaner*)
           let protocol = Some protocol in
           O.received_packet ~conn_id ~ip:dst ~port:dst_port
             ~header ~protocol;
@@ -374,20 +373,25 @@ module Make
             Time.sleep_ns @@ ns_of_sec (1. /. 2.) >>= fun () ->
             write_more ~ctx ~conn_state
         | `Bandwidth (`Up as direction) ->
-          let n_packets = n_bandwidth_packets in
           let protocol = `Bandwidth Protocol.T.{
             direction;
-            n_packets; (*goto control via CLI*)
+            n_packets = n_bandwidth_packets;
+            (*< goto control via CLI - implicitly via 'test-size'*)
             packet_size = monitor_bandwidth#packet_size;
           } in 
           let* ctx = write_packet ~ctx ~header ~protocol in
-          let* ctx = write_n_copies ~ctx ~n:n_packets ~data:bandwidth_testdata in
+          let* ctx =
+            write_n_copies
+              ~ctx
+              ~n:n_bandwidth_packets
+              ~data:bandwidth_testdata
+          in
           let conn_state = `Bandwidth `Down in
           write_more ~ctx ~conn_state
         | `Bandwidth (`Down as direction) ->
           let protocol = `Bandwidth Protocol.T.{
             direction;
-            n_packets = n_bandwidth_packets; (*goto control via CLI*)
+            n_packets = n_bandwidth_packets; 
             packet_size = monitor_bandwidth#packet_size;
           } in 
           let* ctx = write_packet ~ctx ~header ~protocol in
