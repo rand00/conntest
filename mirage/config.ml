@@ -83,16 +83,10 @@ let packages = [
 
 module Notty_dev = struct
 
-  (*> goto are all these packages needed?*)
   type notty_link = NOTTY_LINK
   let term_link_typ = Type.v NOTTY_LINK
   let term_link =
-    let packages = [
-      package "mirage-console";
-      package "mirage-clock";
-      package "mirage-time";
-      package "notty" ~sublibs:["mirage"]
-    ] in
+    let packages = [ package "notty" ~sublibs:["mirage"] ] in
     impl ~packages "Notty_mirage.Terminal_link_of_console" (
       console @-> term_link_typ
     )
