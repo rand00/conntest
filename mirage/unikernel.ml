@@ -145,7 +145,7 @@ module Main
             |> result_of_opt "bad packet-size given"
           | _ -> Error (`Msg "'packet-size' takes an argument like '2MB'")
         in
-        find_option ~options "packet-size" ~default:5_000_000 ~parse_vs
+        find_option ~options "packet-size" ~default:128_000 ~parse_vs
       in
       let+ () = match options with
         | [] -> Ok ()
