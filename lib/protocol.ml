@@ -23,11 +23,6 @@ module T = struct
   ]
   [@@deriving yojson]
 
-  type server_connection_state = [
-    | `Normal
-    | `Bandwidth_packets_to_read of int
-  ]
-
   type client_connection_state = [
     | `Init
     | `Latency

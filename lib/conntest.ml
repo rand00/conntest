@@ -98,7 +98,6 @@ module Make
       dst : Ipaddr.t;
       dst_port : int;
       conn_id : string;
-      conn_state : Protocol.server_connection_state;
       progress : unit -> unit Lwt.t;
     }
 
@@ -126,83 +125,84 @@ module Make
               let msg = Fmt.str "%a" S.TCP.pp_error e in
               Lwt_result.fail @@ `Msg msg
           end
-        | `Done (packet, more_data) ->
-          handle_packet ~ctx ~packet ~more_data 
-      and handle_packet ~ctx ~packet ~more_data =
-        let { flow; dst; dst_port; conn_id; conn_state } = ctx in
-        let header = packet.header in
-        begin match conn_state with
-          | `Bandwidth_packets_to_read n ->
+        | `Done v -> Lwt_result.return v
+      and read_n_packets_ignoring_data ~ctx ~n ~more_data =
+        let { conn_id; dst; dst_port; _ } = ctx in
+        let ignore_data = true in
+        let rec aux ?more_data n =
+          if n <= 0 then Lwt_result.return more_data else
+            let* packet, more_data =
+              read_packet ~ctx ~ignore_data ?data:more_data ()
+            in
+            let header = packet.Packet.T.header in
             let protocol = None in
             O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
-            let ctx, ignore_data =
-              let conn_state, ignore_data =
-                if n <= 1 then
-                  `Normal, false
-                else 
-                  `Bandwidth_packets_to_read (pred n), true
+            aux ?more_data (pred n)
+        in
+        aux n ?more_data
+      and handle_packet ~ctx ~packet ~more_data =
+        let { conn_id; dst; dst_port; _ } = ctx in
+        let header = packet.Packet.T.header in
+        let* protocol = packet.data |> Protocol.of_cstruct |> Lwt.return in
+        match protocol with
+        | `Hello hello ->
+          let protocol = Some protocol in
+          O.received_packet ~conn_id ~ip:dst ~port:dst_port
+            ~header ~protocol;
+          let protocol = `Hello Protocol.T.{ name } in
+          let* () = respond ~ctx ~header ~protocol in
+          let data = more_data in
+          let* packet, more_data = read_packet ~ctx ?data () in
+          handle_packet ~ctx ~packet ~more_data
+        | `Bandwidth bwm ->
+          begin match bwm.Protocol.T.direction with
+            | `Up ->
+              let protocol = Some protocol in
+              O.received_packet ~conn_id ~ip:dst ~port:dst_port
+                ~header ~protocol;
+              let* more_data =
+                read_n_packets_ignoring_data
+                  ~ctx
+                  ~n:bwm.Protocol.T.n_packets
+                  ~more_data
               in
-              { ctx with conn_state }, ignore_data
-            in
-            let data = more_data in
-            read_packet ~ctx ?data ~ignore_data ()
-          | `Normal -> 
-            let* protocol = packet.data |> Protocol.of_cstruct |> Lwt.return in
-            begin match protocol with
-              | `Hello hello ->
-                let protocol = Some protocol in
-                O.received_packet ~conn_id ~ip:dst ~port:dst_port
-                  ~header ~protocol;
-                let protocol = `Hello Protocol.T.{ name } in
-                let* () = respond ~ctx ~header ~protocol in
-                let data = more_data in
-                read_packet ~ctx ?data ()
-              | `Bandwidth bwm ->
-                begin match bwm.Protocol.T.direction with
-                  | `Up ->
-                    let protocol = Some protocol in
-                    O.received_packet ~conn_id ~ip:dst ~port:dst_port
-                      ~header ~protocol;
-                    let ctx = 
-                      let conn_state =
-                        `Bandwidth_packets_to_read bwm.Protocol.T.n_packets in
-                      { ctx with conn_state }
-                    in
-                    let data = more_data in
-                    read_packet ~ctx ?data ~ignore_data:true ()
-                  | `Down -> 
-                    let protocol = Some protocol in
-                    O.received_packet ~conn_id ~ip:dst ~port:dst_port
-                      ~header ~protocol;
-                    let n = bwm.Protocol.T.n_packets in
-                    let data =
-                      String.make bwm.packet_size '%'
-                      |> Cstruct.of_string
-                    in
-                    let* () = respond_with_n_copies ~ctx ~n ~header ~data in
-                    let data = more_data in
-                    read_packet ~ctx ?data ()
-                end
-              | `Latency `Ping ->
-                (*> goto write this proc more like Connect.tcp - seems cleaner*)
-                let protocol = Some protocol in
-                O.received_packet ~conn_id ~ip:dst ~port:dst_port
-                  ~header ~protocol;
-                let header = packet.header in
-                let protocol = `Latency `Pong in
-                let* () = respond ~ctx ~header ~protocol in
-                let data = more_data in
-                read_packet ~ctx ?data ()
-              | `Latency `Pong -> 
-                let protocol = Some protocol in
-                O.received_packet ~conn_id ~ip:dst ~port:dst_port
-                  ~header ~protocol;
-                let data = more_data in
-                read_packet ~ctx ?data ()
-            end
-        end
+              let data = more_data in
+              let* packet, more_data = read_packet ~ctx ?data () in
+              handle_packet ~ctx ~packet ~more_data
+            | `Down -> 
+              let protocol = Some protocol in
+              O.received_packet ~conn_id ~ip:dst ~port:dst_port
+                ~header ~protocol;
+              let n = bwm.Protocol.T.n_packets in
+              let data =
+                String.make bwm.packet_size '%'
+                |> Cstruct.of_string
+              in
+              let* () = respond_with_n_copies ~ctx ~n ~header ~data in
+              let data = more_data in
+              let* packet, more_data = read_packet ~ctx ?data () in
+              handle_packet ~ctx ~packet ~more_data
+          end
+        | `Latency `Ping ->
+          (*> goto write this proc more like Connect.tcp - seems cleaner*)
+          let protocol = Some protocol in
+          O.received_packet ~conn_id ~ip:dst ~port:dst_port
+            ~header ~protocol;
+          let header = packet.header in
+          let protocol = `Latency `Pong in
+          let* () = respond ~ctx ~header ~protocol in
+          let data = more_data in
+          let* packet, more_data = read_packet ~ctx ?data () in
+          handle_packet ~ctx ~packet ~more_data
+        | `Latency `Pong -> 
+          let protocol = Some protocol in
+          O.received_packet ~conn_id ~ip:dst ~port:dst_port
+            ~header ~protocol;
+          let data = more_data in
+          let* packet, more_data = read_packet ~ctx ?data () in
+          handle_packet ~ctx ~packet ~more_data
       and respond ~ctx ~header ~protocol =
-        let { flow; dst; dst_port; conn_id; conn_state } = ctx in
+        let { flow; dst; dst_port; conn_id } = ctx in
         let data = protocol |> Protocol.to_cstruct in
         let response = Packet.to_cstructs ~header ~data in
         S.TCP.writev flow response >>= function
@@ -216,7 +216,7 @@ module Make
           Lwt_result.fail @@ `Msg msg
       and respond_with_n_copies ~ctx ~n ~header ~data =
         if n <= 0 then Lwt_result.return () else 
-          let { flow; dst; dst_port; conn_id; conn_state } = ctx in
+          let { flow; dst; dst_port; conn_id } = ctx in
           let response = Packet.to_cstructs ~header ~data in
           S.TCP.writev flow response >>= function
           | Ok () ->
@@ -233,15 +233,18 @@ module Make
         Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
         let dst, dst_port = S.TCP.dst flow in
         let conn_id = Uuidm.(v `V4 |> to_string) in
-        let conn_state = `Normal in
         O.new_connection ~conn_id ~ip:dst ~port:dst_port;
         Lwt.catch
           (fun () ->
               let timeout_ns = ns_of_sec 5. in (*< goto pass via cli*)
               let timeout_state = Timeout.make ~timeout_ns in
               let progress () = Timeout.progress timeout_state in
-              let ctx = { flow; dst; dst_port; conn_id; conn_state; progress } in
-              let handle_t = read_packet ~ctx () in
+              let ctx = { flow; dst; dst_port; conn_id; progress } in
+              (*> goto could make an 'init protocol' proc*)
+              let handle_t =
+                let* packet, more_data = read_packet ~ctx () in 
+                handle_packet ~ctx ~packet ~more_data
+              in
               Timeout.cancel_on_timeout timeout_state handle_t;
               handle_t >>= function
               | Ok () ->
@@ -293,7 +296,8 @@ module Make
     let tcp ~name ~port ~ip ~monitor_bandwidth =
       let open Lwt_result.Syntax in
       let module O = O.Connect.Tcp in
-      let bandwidth_testdata_str = String.make monitor_bandwidth#packet_size '%' in
+      let bandwidth_testdata_str =
+        String.make monitor_bandwidth#packet_size '%' in
       let bandwidth_testdata = Cstruct.of_string bandwidth_testdata_str in
       let n_bandwidth_packets =
         2000. *. 128e3 /. float monitor_bandwidth#packet_size |> truncate
