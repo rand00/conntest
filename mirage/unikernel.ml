@@ -182,6 +182,15 @@ module Main
       Logs.err (fun m -> m "ERROR: render notty ui");
       Lwt.return_unit
     | Ok term ->
+      let clear () =
+        (*goto clear correctly? - need to make notty support it*)
+        let clear_w, clear_h = 2000, 2000 in
+        (* Notty_term.set_size term (clear_w, clear_h);  *)
+        let image = Notty.I.void clear_w clear_h in
+        Notty_term.write term @@ `Image image >|= function
+        | Ok () -> ()
+        | Error _ -> Logs.err (fun m -> m "ERROR: render notty ui")
+      in
       begin
         Mirage_runtime.at_exit (fun () ->
           Notty_term.close term
@@ -192,14 +201,16 @@ module Main
           | Error _ -> Logs.err (fun m -> m "ERROR: render notty ui")
           (*< goto should always handle errors via Ui module*)
         ) |> Lwt_react.E.keep;
-        dimensions_e |> Lwt_react.E.map (fun dims ->
+        dimensions_e |> Lwt_react.E.map_s (fun dims ->
+          clear () >|= fun () -> 
           Notty_term.set_size term dims
         ) |> Lwt_react.E.keep;
+        clear () >>= fun () ->
         init ()
       end
   
   let start console _notty _time _clock stack =
-    let term_dimensions = 50, 25 in
+    let term_dimensions = 4000, 4000 in
     let name = Key_gen.name () in
     let ui_key = match Key_gen.ui () with
       | "notty" -> `Notty
@@ -211,6 +222,7 @@ module Main
     let ui_m = match ui_key with
       | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
       | `Notty ->
+        Logs.set_level None;
         let module Ui = Conntest.Output.Notty_ui(Time)(Clock)(struct
           let name = name
           (* let term_dimensions = term_dimensions *)
