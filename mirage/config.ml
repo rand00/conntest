@@ -63,7 +63,9 @@ let connections =
        parameters are used to pass extra options, which includes \
        'monitor-bandwidth'. Supported protocols are 'tcp' and 'udp'. \
        Currently only IP's are supported in URIs hostname section. \
-       E.g. tcp://1.2.3.4:1234?monitor-bandwidth"
+       Supported options are: monitor-bandwidth, packet-size=<MB/KB/B>. \
+       E.g. 'tcp://1.2.3.4:1234?monitor-bandwidth&packet-size=128KB'. \
+      "
   in
   let info_v = Key.Arg.info ~doc ~docv [ long_name ] in
   Key.(create long_name Arg.(opt_all ~stage:`Run string info_v))
