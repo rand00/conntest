@@ -16,8 +16,8 @@ module type S = sig
   
   module Listen : sig
 
-    val tcp : name:string -> port:int -> unit
-    val udp : name:string -> port:int -> unit
+    val tcp : name:string -> port:int -> timeout:int -> unit
+    val udp : name:string -> port:int -> timeout:int -> unit
 
   end
 
@@ -28,6 +28,7 @@ module type S = sig
       port:int ->
       ip:Ipaddr.t ->
       monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
+      timeout:int ->
       'a Lwt.t
 
     val udp :
@@ -35,6 +36,7 @@ module type S = sig
       port:int ->
       ip:Ipaddr.t ->
       monitor_bandwidth:'a ->
+      timeout:int ->
       unit Lwt.t
 
   end
@@ -101,7 +103,7 @@ module Make
       progress : unit -> unit Lwt.t;
     }
 
-    let tcp ~name ~port =
+    let tcp ~name ~port ~timeout =
       let module O = O.Listen.Tcp in
       let open Lwt_result.Syntax
       in
@@ -118,7 +120,7 @@ module Make
         | `Unfinished unfinished_packet ->
           begin
             S.TCP.read ctx.flow >>= function
-            | Ok `Eof -> Lwt_result.fail @@ `Msg "Timeout"
+            | Ok `Eof -> Lwt_result.fail @@ `Msg "Server closed connection"
             | Ok (`Data more_data) ->
               ctx.progress () >>= fun () ->
               read_packet ~ctx ~more_data ~unfinished_packet ~ignore_data ()
@@ -231,7 +233,7 @@ module Make
         O.new_connection ~conn_id ~ip:dst ~port:dst_port;
         Lwt.catch
           (fun () ->
-              let timeout_ns = ns_of_sec 5. in (*< goto pass via cli*)
+              let timeout_ns = ns_of_sec (float timeout) in
               let timeout_state = Timeout.make ~timeout_ns in
               let progress () = Timeout.progress timeout_state in
               let ctx = { flow; dst; dst_port; conn_id; progress } in
@@ -262,7 +264,7 @@ module Make
       S.TCP.listen (S.tcp Sv.stack) ~port callback;
       O.registered_listener ~port
 
-    let udp ~name ~port =
+    let udp ~name ~port ~timeout =
       let module O = O.Listen.Udp in
       let callback ~src:_ ~dst ~src_port:_ data =
         O.data ~ip:dst ~port ~data;
@@ -287,7 +289,7 @@ module Make
     
     let sleep_ns_before_retry = ns_of_sec 1.
 
-    let tcp ~name ~port ~ip ~monitor_bandwidth =
+    let tcp ~name ~port ~ip ~monitor_bandwidth ~timeout =
       let open Lwt_result.Syntax in
       let module O = O.Connect.Tcp in
       let bandwidth_testdata_str =
@@ -310,7 +312,7 @@ module Make
         | Ok flow ->
           O.connected ~conn_id ~ip ~port;
           Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
-          let timeout_ns = ns_of_sec 5. in (*< goto pass via cli*)
+          let timeout_ns = ns_of_sec (float timeout) in
           let timeout_state = Timeout.make ~timeout_ns in
           let progress () = Timeout.progress timeout_state in
           let ctx = {
@@ -530,7 +532,7 @@ module Make
       * the listener should send a packet back with same index (right away)
         * so this conntest can check what (roundtrip) latency was of that packet-index
     *)
-    let udp ~name ~port ~ip ~monitor_bandwidth =
+    let udp ~name ~port ~ip ~monitor_bandwidth ~timeout =
       let module O = O.Connect.Udp in
       let data_str = "I'm "^name in
       let data = Cstruct.of_string data_str in

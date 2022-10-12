@@ -25,12 +25,12 @@ module Main
 
   (*Merlin-use line: notty.mirage notty lwt_react tcpip mirage-time mirage-console conntest*)
   
-  let try_register_listener ~ct_m ~name input =
+  let try_register_listener ~ct_m ~name ~timeout input =
     let module Ct = (val ct_m : Conntest.S) in
     begin match input with
       | "tcp" :: port :: [] ->
         begin match int_of_string_opt port with
-          | Some port -> Ct.Listen.tcp ~name ~port |> Result.ok
+          | Some port -> Ct.Listen.tcp ~name ~port ~timeout |> Result.ok
           | None ->
             let msg =
               Fmt.str "try_register_listener: Port '%s' is malformed" port
@@ -39,7 +39,7 @@ module Main
         end
       | "udp" :: port :: [] ->
         begin match int_of_string_opt port with
-          | Some port -> Ct.Listen.udp ~name ~port |> Result.ok
+          | Some port -> Ct.Listen.udp ~name ~port ~timeout |> Result.ok
           | None ->
             let msg =
               Fmt.str "try_register_listener: Port '%s' is malformed" port
@@ -96,7 +96,7 @@ module Main
       | option -> Ok (acc_v, option :: acc_options)
     ) (Ok (default, []))
 
-  let try_initiate_connection ~ct_m ~name uri_str =
+  let try_initiate_connection ~ct_m ~name ~timeout uri_str =
     let module Ct = (val ct_m : Conntest.S) in
     begin
       let uri = Uri.of_string uri_str in
@@ -162,8 +162,8 @@ module Main
       end
       in
       match protocol with
-      | `Tcp -> Ct.Connect.tcp ~name ~port ~ip ~monitor_bandwidth
-      | `Udp -> Ct.Connect.udp ~name ~port ~ip ~monitor_bandwidth
+      | `Tcp -> Ct.Connect.tcp ~name ~port ~ip ~monitor_bandwidth ~timeout
+      | `Udp -> Ct.Connect.udp ~name ~port ~ip ~monitor_bandwidth ~timeout
     end
     |> lwt_result_flip_result >>= function
     | Ok () -> Lwt.return_unit
@@ -212,6 +212,7 @@ module Main
   let start console _notty _time _clock stack =
     let term_dimensions = 4000, 4000 in
     let name = Key_gen.name () in
+    let timeout = Key_gen.timeout () in
     let ui_key = match Key_gen.ui () with
       | "notty" -> `Notty
       | "log" -> `Log
@@ -246,11 +247,11 @@ module Main
     in
     Lwt.async begin fun () -> 
       Key_gen.listen ()
-      |> Lwt_list.iter_p (try_register_listener ~ct_m ~name)
+      |> Lwt_list.iter_p (try_register_listener ~ct_m ~name ~timeout)
     end;
     Lwt.async begin fun () -> 
       Key_gen.connect ()
-      |> Lwt_list.iter_p (try_initiate_connection ~ct_m ~name)
+      |> Lwt_list.iter_p (try_initiate_connection ~ct_m ~name ~timeout)
     end;
     S.listen stack
 
