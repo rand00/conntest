@@ -1,7 +1,7 @@
 
 (*goto rename this module to Ui ? - Output can mean many things.. *)
 
-type connect_tcp_read_error = [
+type connect_tcp_error = [
   | `Eof
   | `Msg of string
   | `Read of (Tcpip.Tcp.error option * string (*message*))
@@ -43,23 +43,26 @@ module type S = sig
       val connected : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
       (*> goto remove data arg here? - maybe useful for debugging*)
       val writing : conn_id:string -> ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
-      (*> goto all errors should be explicit, so user can get all the info wanted
-        .. and notty interface needs error values instead of just a string 
-      *)
       val sent_packet :
         conn_id:string -> ip:Ipaddr.t -> port:int
         -> header:Packet.header -> protocol:Protocol.t option -> unit
       val received_packet :
         conn_id:string -> ip:Ipaddr.t -> port:int
         -> header:Packet.header -> protocol:Protocol.t option -> unit
+      (*> goto all errors should be explicit, so user can get all the info wanted
+        .. and notty interface needs error values instead of just a string 
+      *)
+      val error : conn_id:string -> ip:Ipaddr.t -> port:int
+        -> err:connect_tcp_error  
+        -> unit
       val error_connection :
         conn_id:string -> ip:Ipaddr.t -> port:int -> err:string -> unit
-      val error_writing : conn_id:string -> ip:Ipaddr.t -> port:int
-        -> err:(Tcpip.Tcp.write_error option) -> msg:string
-        -> unit
-      val error_reading : conn_id:string -> ip:Ipaddr.t -> port:int
-        -> err:connect_tcp_read_error 
-        -> unit
+      (* val error_writing : conn_id:string -> ip:Ipaddr.t -> port:int
+       *   -> err:(Tcpip.Tcp.write_error option) -> msg:string
+       *   -> unit
+       * val error_reading : conn_id:string -> ip:Ipaddr.t -> port:int
+       *   -> err:connect_tcp_error 
+       *   -> unit *)
       (*> goto rename to closing_connection for uniformity*)
       val closing_flow : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
       (*> goto remove?*)
@@ -175,13 +178,7 @@ module Log_stdout () : S = struct
             (Ipaddr.to_string ip) port
             err)
 
-      let error_writing ~conn_id:_ ~ip ~port ~err:_ ~msg =
-        Log.warn (fun f ->
-          f "error writing via tcp to %s:%d:\n%s"
-            (Ipaddr.to_string ip) port msg
-        )
-
-      let error_reading ~conn_id:_ ~ip ~port ~err =
+      let error ~conn_id:_ ~ip ~port ~err =
         match err with
         | `Msg msg 
         | `Read (_, msg) -> 
@@ -452,10 +449,7 @@ module Notty_ui
         let error_connection ~conn_id:_ ~ip ~port ~err =
           () (*goto*)
 
-        let error_writing ~conn_id:_ ~ip ~port ~err:_ ~msg =
-          () (*goto*)
-
-        let error_reading ~conn_id:_ ~ip ~port ~err =
+        let error ~conn_id:_ ~ip ~port ~err =
           () (*goto*)
 
         let received_packet ~conn_id ~ip ~port ~header ~protocol  = 

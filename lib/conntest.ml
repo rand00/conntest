@@ -336,7 +336,7 @@ module Make
             Time.sleep_ns sleep_ns_before_retry >>= fun () ->
             loop_try_connect ()
           | Error err ->
-            O.error_reading ~conn_id ~ip ~port ~err;
+            O.error ~conn_id ~ip ~port ~err;
             O.closing_flow ~conn_id ~ip ~port;
             S.TCP.close flow >>= fun () ->
             O.closed_flow ~conn_id ~ip ~port;
