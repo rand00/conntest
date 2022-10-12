@@ -15,9 +15,8 @@ let timeout =
   let long_name = "timeout" in
   let doc =
     Key.Arg.info
-      ~docv:"<FLOAT>"
-      ~doc:"Set the timeout in seconds for read/write of packets, \
-            defaults to 5."
+      ~docv:"<INT>"
+      ~doc:"Set the timeout in seconds for read/write of packets."
       [ long_name ]
   in
   Key.(create long_name Arg.(opt ~stage:`Both int 5 doc))
