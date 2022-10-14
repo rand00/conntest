@@ -810,15 +810,22 @@ module Notty_ui
       |> I.hcat 
 
     let render_pier ~width conn =
-      I.strf "to:%s | ip:%a | port:%d"
-        (* (match conn.typ with `Client -> "Server" | `Server -> "Client") *)
-        (Option.value conn.pier_name ~default:"N/A")
-        Ipaddr.pp conn.pier.Pier.ip
-        conn.pier.Pier.port
+      let line_i =
+        let pier_name = Option.value conn.pier_name ~default:"N/A" in
+        [
+          I.string "to:";
+          I.string ~attr:A.(fg red) pier_name;
+          I.strf " | ip:%a | port:%d"
+            Ipaddr.pp conn.pier.Pier.ip
+            conn.pier.Pier.port
+        ]
+        |> I.hcat
+      in
+      line_i
       |> I.hsnap ~align:`Middle width
       |> I.vpad 0 1
 
-    let render_hsep ~width = I.string (String.make width '-') 
+    let render_hsep ~width ~attr = I.string ~attr (String.make width '-') 
     
     let render_conn ~width ~elapsed_ns (_id, conn) =
       let pier_i = render_pier ~width conn in
@@ -845,7 +852,10 @@ module Notty_ui
             Int.max (I.width image) acc
           ) 0
         in
-        let sep_i = render_hsep ~width:(width + 1) in
+        let sep_i =
+          let attr = A.empty in
+          render_hsep ~width:(width + 1) ~attr
+        in
         let client_conn_images =
           client_conn_images |> List.map (fun conn_image ->
             I.(conn_image <-> sep_i)
@@ -857,19 +867,23 @@ module Notty_ui
         in
         let name_i =
           this_name
-          |> I.string 
-          |> I.hsnap ~align:`Middle width in
+          |> I.string ~attr:A.(fg red)
+          |> I.hsnap ~align:`Middle width
+        in
+        let header_attr = A.(fg red) in
         let client_conns_name_i =
+          let attr = header_attr in
           [
-            I.string " As client " |> I.hsnap ~align:`Middle width;
-            sep_i;
+            I.string ~attr " As client " |> I.hsnap ~align:`Middle width;
+            render_hsep ~width:(width + 1) ~attr;
           ]
           |> I.zcat
         in
         let server_conns_name_i =
+          let attr = header_attr in
           [
-            I.string " As server " |> I.hsnap ~align:`Middle width;
-            sep_i;
+            I.string ~attr " As server " |> I.hsnap ~align:`Middle width;
+            render_hsep ~width:(width + 1) ~attr;
           ]
           |> I.zcat
         in

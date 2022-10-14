@@ -22,3 +22,20 @@ To: miav0 / ip: 10.0.0.2 / port: 1235
 prot | uptime | #sent | #recv | latnc | bndwdth | p-size
 TCP  | 1m6s   | 267   | 134   | 377μs | N/A     | N/A
 ---------------------------------------------------------
+
+
+
+
+
+
+
+                   modified-w-color
+
+#> black sep on colored bg
+---------------------- As client ------------------------
+#> mark name specially
+            to:miav0 | ip:10.0.0.2 | port:1235
+
+prot | uptime | #sent | #recv | latnc | bndwdth | p-size
+TCP  | 1m6s   | 267   | 134   | 377μs | N/A     | N/A
+---------------------------------------------------------
