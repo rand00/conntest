@@ -828,18 +828,24 @@ module Notty_ui
     let render_connections
         (prev, tick, this_name, server_conns, client_conns)
       =
-      let prev_image, prev_tick = prev in
+      let prev_image, prev_tick, prev_max_conn_width = prev in
       if tick = prev_tick then prev else 
-        let width = I.width prev_image in
+        let width = prev_max_conn_width in
         let elapsed_ns = Clock.elapsed_ns () in
         let server_conns = Conn_id_map.bindings server_conns
         and client_conns = Conn_id_map.bindings client_conns
         in
         let render_conn = render_conn ~width ~elapsed_ns in
         let client_conn_images = client_conns |> List.map render_conn
-        and server_conn_images = server_conns |> List.map render_conn
+        and server_conn_images = server_conns |> List.map render_conn 
         in
-        let sep_i = render_hsep ~width in
+        let max_conn_width =
+          (client_conn_images @ server_conn_images)
+          |> List.fold_left (fun acc image ->
+            Int.max (I.width image) acc
+          ) 0
+        in
+        let sep_i = render_hsep ~width:(width + 1) in
         let client_conn_images =
           client_conn_images |> List.map (fun conn_image ->
             I.(conn_image <-> sep_i)
@@ -880,7 +886,7 @@ module Notty_ui
           |> List.flatten
           |> I.vcat
         in
-        image, tick
+        image, tick, max_conn_width
     
     let image_s =
       let define prev_s = 
@@ -893,10 +899,10 @@ module Notty_ui
             Data.Tcp_client.connections_s
           |> S.map ~eq:Eq.never render_connections
         in
-        let s' = s |> S.map fst in
+        let s' = s |> S.map (fun (v, _, _) -> v) in
         s, s'
       in
-      S.fix (I.empty, 0) define
+      S.fix (I.empty, 0 (*tick*), 0(*width*)) define
 
     let image_e =
       image_s |> S.changes
