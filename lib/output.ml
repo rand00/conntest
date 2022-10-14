@@ -764,7 +764,7 @@ module Notty_ui
             else 
               Fmt.str "%.0fns" latency
         in
-        make_column "lat" @@ I.string latency_str
+        make_column "latnc" @@ I.string latency_str
       and packet_size_i =
         let str =
           match conn.packet_size with
@@ -807,7 +807,8 @@ module Notty_ui
 
     let render_pier conn =
       I.strf "%s: %s / ip: %a / port: %d"
-        (match conn.typ with `Client -> "Server" | `Server -> "Client")
+        (* (match conn.typ with `Client -> "Server" | `Server -> "Client") *)
+        "To"
         (Option.value conn.pier_name ~default:"N/A")
         Ipaddr.pp conn.pier.Pier.ip
         conn.pier.Pier.port
@@ -841,7 +842,7 @@ module Notty_ui
           Int.max max_w @@ I.width image
         ) 0
       in
-      let sep_i = render_sep ~w:width in
+      let sep_i = render_sep ~w:(width+1) in
       let client_conn_images =
         client_conn_images |> List.map (fun conn_image ->
           I.(conn_image <-> sep_i)
@@ -858,14 +859,14 @@ module Notty_ui
       let client_conns_name_i =
         [
           I.string " As client " |> I.hsnap ~align:`Middle width;
-          I.string (String.make width '-');
+          sep_i;
         ]
         |> I.zcat
       in
       let server_conns_name_i =
         [
           I.string " As server " |> I.hsnap ~align:`Middle width;
-          I.string (String.make width '-');
+          sep_i;
         ]
         |> I.zcat
       in
