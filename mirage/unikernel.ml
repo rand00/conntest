@@ -220,12 +220,35 @@ module Main
         Logs.err (fun m -> m "Unknown UI '%s'" ui_str);
         exit 64
     in
+    let ui_emph_attr = match Key_gen.ui_emph_attr () with
+      | "none" -> Notty.A.empty
+      | "black" -> Notty.A.(fg black)
+      | "red" -> Notty.A.(fg red)
+      | "green" -> Notty.A.(fg green)
+      | "yellow" -> Notty.A.(fg yellow)
+      | "blue" -> Notty.A.(fg blue)
+      | "magenta" -> Notty.A.(fg magenta)
+      | "cyan" -> Notty.A.(fg cyan)
+      | "white" -> Notty.A.(fg white)
+      | "lightblack" -> Notty.A.(fg lightblack)
+      | "lightred" -> Notty.A.(fg lightred)
+      | "lightgreen" -> Notty.A.(fg lightgreen)
+      | "lightyellow" -> Notty.A.(fg lightyellow)
+      | "lightblue" -> Notty.A.(fg lightblue)
+      | "lightmagenta" -> Notty.A.(fg lightmagenta)
+      | "lightcyan" -> Notty.A.(fg lightcyan)
+      | "lightwhite" -> Notty.A.(fg lightwhite)
+      | ui_str ->
+        Logs.err (fun m -> m "Unknown terminal color '%s'" ui_str);
+        exit 64
+    in
     let ui_m = match ui_key with
       | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
       | `Notty ->
         Logs.set_level None;
         let module Ui = Conntest.Output.Notty_ui(Time)(Clock)(struct
           let name = name
+          let emph_attr = ui_emph_attr
           (* let term_dimensions = term_dimensions *)
         end)
         in

@@ -240,6 +240,7 @@ end
 module type NOTTY_UI_ARGS = sig
 
   val name : string
+  val emph_attr : Notty.attr
   (* val term_dimensions : int * int  *)
 
 end
@@ -259,6 +260,7 @@ module Tuple = struct
   let mk3 v0 v1 v2 = v0, v1, v2
   let mk4 v0 v1 v2 v3 = v0, v1, v2, v3
   let mk5 v0 v1 v2 v3 v4 = v0, v1, v2, v3, v4
+  let mk6 v0 v1 v2 v3 v4 v5 = v0, v1, v2, v3, v4, v5
 
 end
 
@@ -371,6 +373,8 @@ module Notty_ui
   let init () = Tick.loop_feed ()
 
   let (name_s : string S.t), name_supd = S.create Args.name
+
+  let (emph_attr_s : Notty.attr S.t), emph_attr_supd = S.create Args.emph_attr
 
   (* let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
    *   S.create Args.term_dimensions *)
@@ -809,12 +813,12 @@ module Notty_ui
       |> List.flatten
       |> I.hcat 
 
-    let render_pier ~width conn =
+    let render_pier ~width ~attr conn =
       let line_i =
         let pier_name = Option.value conn.pier_name ~default:"N/A" in
         [
           I.string "to:";
-          I.string ~attr:A.(fg red) pier_name;
+          I.string ~attr pier_name;
           I.strf " | ip:%a | port:%d"
             Ipaddr.pp conn.pier.Pier.ip
             conn.pier.Pier.port
@@ -827,22 +831,22 @@ module Notty_ui
 
     let render_hsep ~width ~attr = I.string ~attr (String.make width '-') 
     
-    let render_conn ~width ~elapsed_ns (_id, conn) =
-      let pier_i = render_pier ~width conn in
+    let render_conn ~width ~elapsed_ns ~attr (_id, conn) =
+      let pier_i = render_pier ~width ~attr conn in
       let table_i = render_table elapsed_ns conn in
       I.(pier_i <-> table_i)
-    
+
     let render_connections
-        (prev, tick, this_name, server_conns, client_conns)
+        (prev, tick, this_name, emph_attr, server_conns, client_conns)
       =
       let prev_image, prev_tick, prev_max_conn_width = prev in
-      if tick = prev_tick then prev else 
+      if tick = prev_tick then prev else
         let width = prev_max_conn_width in
         let elapsed_ns = Clock.elapsed_ns () in
         let server_conns = Conn_id_map.bindings server_conns
         and client_conns = Conn_id_map.bindings client_conns
         in
-        let render_conn = render_conn ~width ~elapsed_ns in
+        let render_conn = render_conn ~width ~elapsed_ns ~attr:emph_attr in
         let client_conn_images = client_conns |> List.map render_conn
         and server_conn_images = server_conns |> List.map render_conn 
         in
@@ -867,10 +871,10 @@ module Notty_ui
         in
         let name_i =
           this_name
-          |> I.string ~attr:A.(fg red)
+          |> I.string ~attr:emph_attr
           |> I.hsnap ~align:`Middle width
         in
-        let header_attr = A.(fg red) in
+        let header_attr = emph_attr in
         let client_conns_name_i =
           let attr = header_attr in
           [
@@ -905,10 +909,11 @@ module Notty_ui
     let image_s =
       let define prev_s = 
         let s =
-          S.l5 ~eq:Eq.never Tuple.mk5
+          S.l6 ~eq:Eq.never Tuple.mk6
             prev_s
             Tick.s
             name_s
+            emph_attr_s
             Data.Tcp_server.connections_s
             Data.Tcp_client.connections_s
           |> S.map ~eq:Eq.never render_connections

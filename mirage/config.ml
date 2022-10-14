@@ -11,6 +11,17 @@ let ui =
   in
   Key.(create long_name Arg.(opt ~stage:`Run string "notty" doc))
 
+let ui_emph_attr =
+  let long_name = "ui-emphasis" in
+  let doc =
+    Key.Arg.info
+      ~docv:"<TERMINAL-COLOUR>"
+      ~doc:"Choose which color to use for emphasized sections in notty UI.\
+            Supports all 16 core ANSI colors, and 'none'."
+      [ long_name ]
+  in
+  Key.(create "ui_emph_attr" Arg.(opt ~stage:`Both string "red" doc))
+
 let timeout =
   let long_name = "timeout" in
   let doc =
@@ -73,6 +84,7 @@ let connections =
 let keys = [
   key name;
   key ui;
+  key ui_emph_attr;
   key timeout;
   key listens;
   key connections;
