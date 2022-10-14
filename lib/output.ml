@@ -356,6 +356,8 @@ module Notty_ui
 
     let e, eupd = E.create ()
 
+    let s = S.hold 0 e
+
     let loop_feed () =
       let rec aux i =
         eupd i;
@@ -723,14 +725,16 @@ module Notty_ui
     open Notty 
 
     let render_table elapsed_ns conn =
-      let sep_i = I.(string "|" <-> string "|") in
-      let make_column title data_i =
+      let sep_i = I.(string " | " <-> string " | ") in
+      let make_column ?(no_sep=false) title data_i =
         let title_i = I.string title in
-        I.(sep_i <|> (title_i <-> data_i))
+        let col_i = I.(title_i <-> data_i) in
+        if no_sep then col_i else I.(sep_i <|> col_i)
       in
-      let protocol_i = make_column "prot" @@ match conn.protocol with
-      | `Tcp -> I.string "TCP"
-      | `Udp -> I.string "UDP"
+      let protocol_i = make_column ~no_sep:true "prot" @@
+        match conn.protocol with
+        | `Tcp -> I.string "TCP"
+        | `Udp -> I.string "UDP"
       and sent_packages_i =
         make_column "#sent" @@ I.strf "%d" conn.sent_packets
       and recv_packages_i =
@@ -805,92 +809,97 @@ module Notty_ui
       |> List.flatten
       |> I.hcat 
 
-    let render_pier conn =
-      I.strf "%s: %s / ip: %a / port: %d"
+    let render_pier ~width conn =
+      I.strf "to:%s | ip:%a | port:%d"
         (* (match conn.typ with `Client -> "Server" | `Server -> "Client") *)
-        "To"
         (Option.value conn.pier_name ~default:"N/A")
         Ipaddr.pp conn.pier.Pier.ip
         conn.pier.Pier.port
+      |> I.hsnap ~align:`Middle width
       |> I.vpad 0 1
 
-    let render_sep ~w = I.string (String.make w '-') 
+    let render_hsep ~width = I.string (String.make width '-') 
     
-    let render_conn ~elapsed_ns (_id, conn) =
-      let pier_i = render_pier conn in
+    let render_conn ~width ~elapsed_ns (_id, conn) =
+      let pier_i = render_pier ~width conn in
       let table_i = render_table elapsed_ns conn in
-      [
-        pier_i;
-        table_i;
-      ]
-      |> I.vcat
+      I.(pier_i <-> table_i)
     
-    let render_connections (this_name, server_conns, client_conns) =
-      let elapsed_ns = Clock.elapsed_ns () in
-      let server_conns = Conn_id_map.bindings server_conns
-      and client_conns = Conn_id_map.bindings client_conns
-      in
-      (*> goto intersperse with separators*)
-      let client_conn_images =
-        client_conns |> List.map (render_conn ~elapsed_ns)
-      and server_conn_images =
-        server_conns |> List.map (render_conn ~elapsed_ns)
-      in
-      let width =
-        (client_conn_images @ server_conn_images)
-        |> List.fold_left (fun max_w image ->
-          Int.max max_w @@ I.width image
-        ) 0
-      in
-      let sep_i = render_sep ~w:(width+1) in
-      let client_conn_images =
-        client_conn_images |> List.map (fun conn_image ->
-          I.(conn_image <-> sep_i)
-        ) 
-      and server_conn_images =
-        server_conn_images |> List.map (fun conn_image ->
-          I.(conn_image <-> sep_i)
-        ) 
-      in
-      let name_i =
-        this_name
-        |> I.string 
-        |> I.hsnap ~align:`Middle width in
-      let client_conns_name_i =
-        [
-          I.string " As client " |> I.hsnap ~align:`Middle width;
-          sep_i;
-        ]
-        |> I.zcat
-      in
-      let server_conns_name_i =
-        [
-          I.string " As server " |> I.hsnap ~align:`Middle width;
-          sep_i;
-        ]
-        |> I.zcat
-      in
-      let make_section name_i = function
-        | [] -> []
-        | conn_is -> I.void 0 1 :: name_i :: conn_is 
-      in
-      [
-        [name_i];
-        make_section client_conns_name_i client_conn_images;
-        make_section server_conns_name_i server_conn_images;
-      ]
-      |> List.flatten
-      |> I.vcat 
+    let render_connections
+        (prev, tick, this_name, server_conns, client_conns)
+      =
+      let prev_image, prev_tick = prev in
+      if tick = prev_tick then prev else 
+        let width = I.width prev_image in
+        let elapsed_ns = Clock.elapsed_ns () in
+        let server_conns = Conn_id_map.bindings server_conns
+        and client_conns = Conn_id_map.bindings client_conns
+        in
+        let render_conn = render_conn ~width ~elapsed_ns in
+        let client_conn_images = client_conns |> List.map render_conn
+        and server_conn_images = server_conns |> List.map render_conn
+        in
+        let sep_i = render_hsep ~width in
+        let client_conn_images =
+          client_conn_images |> List.map (fun conn_image ->
+            I.(conn_image <-> sep_i)
+          ) 
+        and server_conn_images =
+          server_conn_images |> List.map (fun conn_image ->
+            I.(conn_image <-> sep_i)
+          ) 
+        in
+        let name_i =
+          this_name
+          |> I.string 
+          |> I.hsnap ~align:`Middle width in
+        let client_conns_name_i =
+          [
+            I.string " As client " |> I.hsnap ~align:`Middle width;
+            sep_i;
+          ]
+          |> I.zcat
+        in
+        let server_conns_name_i =
+          [
+            I.string " As server " |> I.hsnap ~align:`Middle width;
+            sep_i;
+          ]
+          |> I.zcat
+        in
+        let make_section name_i = function
+          | [] -> []
+          | conn_is -> I.void 0 1 :: name_i :: conn_is 
+        in
+        let image =
+          [
+            [name_i];
+            make_section client_conns_name_i client_conn_images;
+            make_section server_conns_name_i server_conn_images;
+          ]
+          |> List.flatten
+          |> I.vcat
+        in
+        image, tick
     
     let image_s =
-      S.l3 ~eq:Eq.never Tuple.mk3
-        name_s
-        Data.Tcp_server.connections_s
-        Data.Tcp_client.connections_s
-      |> S.map ~eq:Eq.never render_connections
+      let define prev_s = 
+        let s =
+          S.l5 ~eq:Eq.never Tuple.mk5
+            prev_s
+            Tick.s
+            name_s
+            Data.Tcp_server.connections_s
+            Data.Tcp_client.connections_s
+          |> S.map ~eq:Eq.never render_connections
+        in
+        let s' = s |> S.map fst in
+        s, s'
+      in
+      S.fix (I.empty, 0) define
 
     let image_e =
-      image_s |> S.sample (fun _ image -> image) Tick.e
+      image_s |> S.changes
 
     let dimensions_s =
       image_s |> S.map (fun image -> I.width image, I.height image)
