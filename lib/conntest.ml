@@ -58,41 +58,6 @@ module Make
   type stack = S.t
   type udp_error = S.UDP.error
 
-  module Timeout = struct
-
-    type t = {
-      timeout_ns : Int64.t;
-      progress : unit Lwt_mvar.t;
-      timeout : unit Lwt.t;
-    }
-
-    let make ~timeout_ns =
-      let progress = Lwt_mvar.create () in
-      let rec return_on_timeout () =
-        Lwt.pick [
-          (Lwt_mvar.take progress >|= fun () -> `Progress);
-          (Time.sleep_ns timeout_ns >|= fun () -> `Timeout);
-        ]
-        >>= function
-        | `Progress -> return_on_timeout ()
-        | `Timeout -> Lwt.return_unit
-      in
-      let timeout = return_on_timeout () in
-      { timeout_ns; progress; timeout }
-
-    let progress : t -> unit Lwt.t = fun state ->
-      Lwt_mvar.put state.progress ()
-
-    let cancel_on_timeout : t -> 'a Lwt.t -> unit =
-      fun state t ->
-      Lwt.async (fun () -> state.timeout >|= fun () -> Lwt.cancel t)
-
-    let on_timeout : t -> (unit -> unit Lwt.t) -> unit Lwt.t =
-      fun state f ->
-      state.timeout >>= f
-    
-  end
-
   module Listen = struct
 
     type context = {
@@ -233,8 +198,9 @@ module Make
         O.new_connection ~conn_id ~ip:dst ~port:dst_port;
         Lwt.catch
           (fun () ->
+              let sleep_ns = Time.sleep_ns in
               let timeout_ns = ns_of_sec (float timeout) in
-              let timeout_state = Timeout.make ~timeout_ns in
+              let timeout_state = Timeout.make ~sleep_ns ~timeout_ns in
               let progress () = Timeout.progress timeout_state in
               let ctx = { flow; dst; dst_port; conn_id; progress } in
               let handle_t =
@@ -312,8 +278,9 @@ module Make
         | Ok flow ->
           O.connected ~conn_id ~ip ~port;
           Mirage_runtime.at_exit (fun () -> S.TCP.close flow);
+          let sleep_ns = Time.sleep_ns in
           let timeout_ns = ns_of_sec (float timeout) in
-          let timeout_state = Timeout.make ~timeout_ns in
+          let timeout_state = Timeout.make ~sleep_ns ~timeout_ns in
           let progress () = Timeout.progress timeout_state in
           let ctx = {
             flow;
