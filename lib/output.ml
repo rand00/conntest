@@ -12,75 +12,64 @@ module type S = sig
 
   module Listen : sig
 
-    module Tcp : sig
-      val registered_listener : port:int -> unit
-      val new_connection : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
-      val closing_connection : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
-      (*> goto all errors should be explicit, so user can get all the info wanted
-        .. and notty interface needs error values instead of just a string 
-      *)
-      val error : conn_id:string  -> ip:Ipaddr.t -> port:int -> err:string -> unit
-      val received_packet :
-        conn_id:string -> ip:Ipaddr.t -> port:int
-        -> header:Packet.header -> protocol:Protocol.t option -> unit
-      val sent_packet :
-        conn_id:string -> ip:Ipaddr.t -> port:int
-        -> header:Packet.header -> protocol:Protocol.t option -> unit
-    end
+    val registered_listener : port:int -> unit
+    val new_connection : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
+    val closing_connection : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
+    (*> goto all errors should be explicit, so user can get all the info wanted
+      .. and notty interface needs error values instead of just a string 
+    *)
+    val error : conn_id:string  -> ip:Ipaddr.t -> port:int -> err:string -> unit
+    val received_packet :
+      conn_id:string -> ip:Ipaddr.t -> port:int
+      -> header:Packet.header -> protocol:Protocol_msg.t option -> unit
+    val sent_packet :
+      conn_id:string -> ip:Ipaddr.t -> port:int
+      -> header:Packet.header -> protocol:Protocol_msg.t option -> unit
 
-    module Udp : sig
-      val data : ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
-      val registered_listener : port:int -> unit
-    end
-    
   end
 
   module Connect : sig
 
-    module Tcp : sig
+    val connecting : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
+    val connected : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
+    (*> goto remove data arg here? - maybe useful for debugging*)
+    val writing : conn_id:string -> ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
+    val sent_packet :
+      conn_id:string -> ip:Ipaddr.t -> port:int
+      -> header:Packet.header -> protocol:Protocol_msg.t option -> unit
+    val received_packet :
+      conn_id:string -> ip:Ipaddr.t -> port:int
+      -> header:Packet.header -> protocol:Protocol_msg.t option -> unit
+    (*> goto all errors should be explicit, so user can get all the info wanted
+      .. and notty interface needs error values instead of just a string 
+    *)
+    val error : conn_id:string -> ip:Ipaddr.t -> port:int
+      -> err:connect_tcp_error  
+      -> unit
+    val error_connection :
+      conn_id:string -> ip:Ipaddr.t -> port:int -> err:string -> unit
+    (* val error_writing : conn_id:string -> ip:Ipaddr.t -> port:int
+     *   -> err:(Tcpip.Tcp.write_error option) -> msg:string
+     *   -> unit
+     * val error_reading : conn_id:string -> ip:Ipaddr.t -> port:int
+     *   -> err:connect_tcp_error 
+     *   -> unit *)
+    (*> goto rename to closing_connection for uniformity*)
+    val closing_flow : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
+    (*> goto remove?*)
+    val closed_flow : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
 
-      val connecting : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
-      val connected : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
-      (*> goto remove data arg here? - maybe useful for debugging*)
-      val writing : conn_id:string -> ip:Ipaddr.t -> port:int -> data:Cstruct.t -> unit
-      val sent_packet :
-        conn_id:string -> ip:Ipaddr.t -> port:int
-        -> header:Packet.header -> protocol:Protocol.t option -> unit
-      val received_packet :
-        conn_id:string -> ip:Ipaddr.t -> port:int
-        -> header:Packet.header -> protocol:Protocol.t option -> unit
-      (*> goto all errors should be explicit, so user can get all the info wanted
-        .. and notty interface needs error values instead of just a string 
-      *)
-      val error : conn_id:string -> ip:Ipaddr.t -> port:int
-        -> err:connect_tcp_error  
-        -> unit
-      val error_connection :
-        conn_id:string -> ip:Ipaddr.t -> port:int -> err:string -> unit
-      (* val error_writing : conn_id:string -> ip:Ipaddr.t -> port:int
-       *   -> err:(Tcpip.Tcp.write_error option) -> msg:string
-       *   -> unit
-       * val error_reading : conn_id:string -> ip:Ipaddr.t -> port:int
-       *   -> err:connect_tcp_error 
-       *   -> unit *)
-      (*> goto rename to closing_connection for uniformity*)
-      val closing_flow : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
-      (*> goto remove?*)
-      val closed_flow : conn_id:string -> ip:Ipaddr.t -> port:int -> unit
-          
-    end
-
-    module Udp : sig
-
-      val writing : ip:Ipaddr.t -> port:int -> data:string -> unit
-
-    end
-    
   end
 
 end
 
-module Log_stdout () : S = struct
+module type PROTO = sig
+
+  val name : string
+  
+end
+
+module Log_stdout (Proto : PROTO) : S = struct
 
   let src = Logs.Src.create "conntest" ~doc:"conntest events"
   module Log = (val Logs.src_log src : Logs.LOG)
@@ -92,156 +81,121 @@ module Log_stdout () : S = struct
   
   module Listen = struct
 
-    module Tcp = struct
-      
-      let new_connection ~conn_id:_ ~ip ~port =
-        Log.info (fun m ->
-          m "new tcp connection from %s:%d"
-            (Ipaddr.to_string ip) port)
+    let new_connection ~conn_id:_ ~ip ~port =
+      Log.info (fun m ->
+        m "new %s connection from %s:%d"
+          Proto.name (Ipaddr.to_string ip) port
+      )
 
-      let closing_connection ~conn_id:_ ~ip ~port =
-        Log.info (fun f -> f "closing tcp connection to %s:%d"
-            (Ipaddr.to_string ip) port
-        )
+    let closing_connection ~conn_id:_ ~ip ~port =
+      Log.info (fun f -> f "closing %s connection to %s:%d"
+          Proto.name (Ipaddr.to_string ip) port
+      )
 
-      let error ~conn_id:_ ~ip ~port ~err =
-        Log.warn (fun f ->
-          f "error reading data from tcp connection %s:%d:\n%s"
-            (Ipaddr.to_string ip) port
-            err)
+    let error ~conn_id:_ ~ip ~port ~err =
+      Log.warn (fun f ->
+        f "error reading data from %s connection %s:%d:\n%s"
+          Proto.name (Ipaddr.to_string ip) port
+          err
+      )
 
-      let registered_listener ~port =
-        Log.info (fun f -> f "registered tcp listener on port %d" port)
+    let registered_listener ~port =
+      Log.info (fun f -> f "registered %s listener on port %d" Proto.name port)
 
-      let received_packet ~conn_id:_ ~ip ~port ~header ~protocol =
-        let open Packet.T in
-        Log.info (fun f ->
-          f "got packet from %s:%d:\n---- header:\n%s\n---- protocol:\n%s"
-            (Ipaddr.to_string ip) port
-            (header |> Packet.Header.to_string)
-            (protocol
-             |> Option.map Protocol.to_string
-             |> Option.value ~default:"None")
-        )
+    let received_packet ~conn_id:_ ~ip ~port ~header ~protocol =
+      let open Packet.T in
+      Log.info (fun f ->
+        f "got %s-packet from %s:%d:\n---- header:\n%s\n---- protocol:\n%s"
+          Proto.name
+          (Ipaddr.to_string ip) port
+          (header |> Packet.Header.to_string)
+          (protocol
+           |> Option.map Protocol_msg.to_string
+           |> Option.value ~default:"None")
+      )
 
-      let sent_packet ~conn_id:_ ~ip ~port ~header ~protocol =
-        let open Packet.T in
-        Log.info (fun f ->
-          f "sent packet to %s:%d:\n---- header:\n%s\n---- protocol:\n%s"
-            (Ipaddr.to_string ip) port
-            (header |> Packet.Header.to_string)
-            (protocol
-             |> Option.map Protocol.to_string
-             |> Option.value ~default:"None")
-        )
-
-    end
-
-    module Udp = struct
-
-      let data ~ip ~port ~data =
-        Log.info (fun f ->
-          f "read %d bytes from %s:%d:\n%s"
-            (Cstruct.length data)
-            (Ipaddr.to_string ip) port
-            (Cstruct.to_string data))
-
-      let registered_listener ~port =
-        Log.info (fun f -> f "registered udp listener on port %d" port)
-
-    end
+    let sent_packet ~conn_id:_ ~ip ~port ~header ~protocol =
+      let open Packet.T in
+      Log.info (fun f ->
+        f "sent %s-packet to %s:%d:\n---- header:\n%s\n---- protocol:\n%s"
+          Proto.name
+          (Ipaddr.to_string ip) port
+          (header |> Packet.Header.to_string)
+          (protocol
+           |> Option.map Protocol_msg.to_string
+           |> Option.value ~default:"None")
+      )
 
   end
 
   module Connect = struct
 
-    module Tcp = struct
+    let connecting ~conn_id:_ ~ip ~port =
+      Log.info (fun m ->
+        m "connecting via %s to %s:%d"
+          Proto.name (Ipaddr.to_string ip) port)
 
-      let connecting ~conn_id:_ ~ip ~port =
-        Log.info (fun m ->
-          m "connecting via tcp to %s:%d"
-            (Ipaddr.to_string ip) port)
+    let connected ~conn_id:_ ~ip ~port =
+      Log.info (fun m ->
+        m "connected via %s to %s:%d"
+          Proto.name (Ipaddr.to_string ip) port)
 
-      let connected ~conn_id:_ ~ip ~port =
-        Log.info (fun m ->
-          m "connected via tcp to %s:%d"
-            (Ipaddr.to_string ip) port)
+    let writing ~conn_id:_ ~ip ~port ~data =
+      Log.info (fun m ->
+        m "writing via %s to %s:%d"
+          Proto.name (Ipaddr.to_string ip) port) 
 
-      let writing ~conn_id:_ ~ip ~port ~data =
-        Log.info (fun m ->
-          m "writing via tcp to %s:%d" (Ipaddr.to_string ip) port
-        ) 
+    let error_connection ~conn_id:_ ~ip ~port ~err =
+      Log.warn (fun f ->
+        f "error connecting via %s to %s:%d:\n%s"
+          Proto.name (Ipaddr.to_string ip) port
+          err)
 
-      let error_connection ~conn_id:_ ~ip ~port ~err =
+    let error ~conn_id:_ ~ip ~port ~err =
+      match err with
+      | `Msg msg 
+      | `Read (_, msg) -> 
         Log.warn (fun f ->
-          f "error connecting via tcp to %s:%d:\n%s"
-            (Ipaddr.to_string ip) port
-            err)
-
-      let error ~conn_id:_ ~ip ~port ~err =
-        match err with
-        | `Msg msg 
-        | `Read (_, msg) -> 
-          Log.warn (fun f ->
-            f "error reading via tcp from %s:%d:\n%s"
-              (Ipaddr.to_string ip) port msg
-          )
-        | `Eof ->
-          Log.warn (fun f ->
-            f "error reading via tcp from %s:%d:\n%s"
-              (Ipaddr.to_string ip) port "End of file"
-          )
-
-      let received_packet ~conn_id:_ ~ip ~port ~header ~protocol =
-        let open Packet.T in
-        Log.info (fun f ->
-          f "got packet from %s:%d:\n---- header:\n%s\n---- protocol:\n%s"
-            (Ipaddr.to_string ip) port
-            (header |> Packet.Header.to_string)
-            (protocol
-             |> Option.map Protocol.to_string
-             |> Option.value ~default:"None")
+          f "error reading via %s from %s:%d:\n%s"
+            Proto.name (Ipaddr.to_string ip) port msg
+        )
+      | `Eof ->
+        Log.warn (fun f ->
+          f "error reading via %s from %s:%d:\n%s"
+            Proto.name (Ipaddr.to_string ip) port "End of file"
         )
 
-      let sent_packet ~conn_id:_ ~ip ~port ~header ~protocol =
-        let open Packet.T in
-        Log.info (fun f ->
-          f "sent packet to %s:%d:\n---- header:\n%s\n---- protocol:\n%s"
-            (Ipaddr.to_string ip) port
-            (header |> Packet.Header.to_string)
-            (protocol
-             |> Option.map Protocol.to_string
-             |> Option.value ~default:"None")
-        )
-      
-      let closing_flow ~conn_id:_ ~ip ~port =
-        Log.info (fun m ->
-          m "closing tcp flow to %s:%d" (Ipaddr.to_string ip) port)
-        
-      let closed_flow ~conn_id:_ ~ip ~port =
-        Log.info (fun m ->
-          m "closed tcp flow to %s:%d" (Ipaddr.to_string ip) port)
+    let received_packet ~conn_id:_ ~ip ~port ~header ~protocol =
+      let open Packet.T in
+      Log.info (fun f ->
+        f "got %s-packet from %s:%d:\n---- header:\n%s\n---- protocol:\n%s"
+          Proto.name (Ipaddr.to_string ip) port
+          (header |> Packet.Header.to_string)
+          (protocol
+           |> Option.map Protocol_msg.to_string
+           |> Option.value ~default:"None")
+      )
 
-    end
+    let sent_packet ~conn_id:_ ~ip ~port ~header ~protocol =
+      let open Packet.T in
+      Log.info (fun f ->
+        f "sent %s-packet to %s:%d:\n---- header:\n%s\n---- protocol:\n%s"
+          Proto.name (Ipaddr.to_string ip) port
+          (header |> Packet.Header.to_string)
+          (protocol
+           |> Option.map Protocol_msg.to_string
+           |> Option.value ~default:"None")
+      )
 
-    module Udp = struct
+    let closing_flow ~conn_id:_ ~ip ~port =
+      Log.info (fun m ->
+        m "closing %s flow to %s:%d" Proto.name (Ipaddr.to_string ip) port)
 
-      let writing ~ip ~port ~data =
-        Log.info (fun m ->
-          m "writing via udp to %s on port %d: %s"
-            (Ipaddr.to_string ip) port data)
-
-    end
+    let closed_flow ~conn_id:_ ~ip ~port =
+      Log.info (fun m ->
+        m "closed %s flow to %s:%d" Proto.name (Ipaddr.to_string ip) port)
 
   end
-
-end
-
-module type NOTTY_UI_ARGS = sig
-
-  val name : string
-  val emph_attr : Notty.attr
-  (* val term_dimensions : int * int  *)
 
 end
 
@@ -302,11 +256,13 @@ module Connection = struct
 
     type id = Uuidm.t
 
+    type protocol = [ `Tcp | `Udp ]
+    
     type t = {
       typ : [ `Client | `Server ];
       pier : Pier.t;
       pier_name : string option;
-      protocol : [ `Tcp | `Udp ];
+      protocol : protocol;
       start_time : Int64.t; (*arbitrary startpoint in nanoseconds*)
       error : bool;
       sent_packets : int;
@@ -341,6 +297,14 @@ end
 open Connection.T
 open Pier.T
 
+module type NOTTY_UI_ARGS = sig
+
+  val name : string
+  val emph_attr : Notty.attr
+  val protocol : protocol
+
+end
+
 (*> goto make this fit S signature, or inner module?*)
 module Notty_ui
     (Time : Mirage_time.S)
@@ -374,6 +338,8 @@ module Notty_ui
 
   let (name_s : string S.t), name_supd = S.create Args.name
 
+  let (protocol_s : protocol S.t), protocol_supd = S.create Args.protocol
+
   let (emph_attr_s : Notty.attr S.t), emph_attr_supd = S.create Args.emph_attr
 
   (* let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
@@ -384,100 +350,75 @@ module Notty_ui
 
     module Listen = struct
 
-      module Tcp = struct
+      type event = [
+        | `New_connection of Pier.t
+        | `Closing_connection of Pier.t
+        | `Error of (Pier.t * string)
+        | `Recv_packet of (Pier.t * Protocol_msg.t option)
+        | `Sent_packet of (Pier.t * Protocol_msg.t option)
+      ]
 
-        type event = [
-          | `New_connection of Pier.t
-          | `Closing_connection of Pier.t
-          | `Error of (Pier.t * string)
-          | `Recv_packet of (Pier.t * Protocol.t option)
-          | `Sent_packet of (Pier.t * Protocol.t option)
-        ]
-        
-        let (e : event E.t), eupd = E.create ()
+      let (e : event E.t), eupd = E.create ()
 
-        let new_connection ~conn_id ~ip ~port =
-          eupd @@ `New_connection {ip; port; conn_id}
+      let new_connection ~conn_id ~ip ~port =
+        eupd @@ `New_connection {ip; port; conn_id}
 
-        let closing_connection ~conn_id ~ip ~port =
-          eupd @@ `Closing_connection {ip; port; conn_id}
+      let closing_connection ~conn_id ~ip ~port =
+        eupd @@ `Closing_connection {ip; port; conn_id}
 
-        let error ~conn_id ~ip ~port ~err =
-          eupd @@ `Error ({ip; port; conn_id}, (err : string))
+      let error ~conn_id ~ip ~port ~err =
+        eupd @@ `Error ({ip; port; conn_id}, (err : string))
 
-        let registered_listener ~port = () 
+      let registered_listener ~port = () 
 
-        (*> Note: there is also a remote conn-id in header*)
-        let received_packet ~conn_id ~ip ~port ~header ~protocol =
-          eupd @@ `Recv_packet ({ip; port; conn_id}, protocol)
+      (*> Note: there is also a remote conn-id in header*)
+      let received_packet ~conn_id ~ip ~port ~header ~protocol =
+        eupd @@ `Recv_packet ({ip; port; conn_id}, protocol)
 
-        let sent_packet ~conn_id ~ip ~port ~header ~protocol =
-          eupd @@ `Sent_packet ({ip; port; conn_id}, protocol)
-        
-      end
-
-      module Udp = struct
-
-        let data ~ip ~port ~data =
-          () (*goto*)
-
-        let registered_listener ~port =
-          () (*goto*)
-
-      end
+      let sent_packet ~conn_id ~ip ~port ~header ~protocol =
+        eupd @@ `Sent_packet ({ip; port; conn_id}, protocol)
 
     end
 
     module Connect = struct
 
-      module Tcp = struct
+      (*goto make (sub)type common for server/client?*)
+      type event = [
+        | `New_connection of Pier.t
+        | `Closing_connection of Pier.t
+        (* | `Error of (Pier.t * string) *)
+        | `Recv_packet of (Pier.t * Protocol_msg.t option)
+        | `Sent_packet of (Pier.t * Protocol_msg.t option)
+      ]
 
-        (*goto make (sub)type common for server/client?*)
-        type event = [
-          | `New_connection of Pier.t
-          | `Closing_connection of Pier.t
-          (* | `Error of (Pier.t * string) *)
-          | `Recv_packet of (Pier.t * Protocol.t option)
-          | `Sent_packet of (Pier.t * Protocol.t option)
-        ]
-        
-        let (e : event E.t), eupd = E.create ()
+      let (e : event E.t), eupd = E.create ()
 
-        let connecting ~conn_id:_ ~ip ~port =
-          () (*goto*)
+      let connecting ~conn_id:_ ~ip ~port =
+        () (*goto*)
 
-        let connected ~conn_id ~ip ~port =
-          eupd @@ `New_connection {ip; port; conn_id}
+      let connected ~conn_id ~ip ~port =
+        eupd @@ `New_connection {ip; port; conn_id}
 
-        let writing ~conn_id:_ ~ip ~port ~data =
-          () (*goto*)
+      let writing ~conn_id:_ ~ip ~port ~data =
+        () (*goto*)
 
-        let error_connection ~conn_id:_ ~ip ~port ~err =
-          () (*goto*)
+      let error_connection ~conn_id:_ ~ip ~port ~err =
+        () (*goto*)
 
-        let error ~conn_id:_ ~ip ~port ~err =
-          () (*goto*)
+      let error ~conn_id:_ ~ip ~port ~err =
+        () (*goto*)
 
-        let received_packet ~conn_id ~ip ~port ~header ~protocol  = 
-          eupd @@ `Recv_packet ({ip; port; conn_id}, protocol)
+      let received_packet ~conn_id ~ip ~port ~header ~protocol  = 
+        eupd @@ `Recv_packet ({ip; port; conn_id}, protocol)
 
-        let sent_packet ~conn_id ~ip ~port ~header ~protocol = 
-          eupd @@ `Sent_packet ({ip; port; conn_id}, protocol)
+      let sent_packet ~conn_id ~ip ~port ~header ~protocol = 
+        eupd @@ `Sent_packet ({ip; port; conn_id}, protocol)
 
-        let closing_flow ~conn_id ~ip ~port =
-          eupd @@ `Closing_connection {ip; port; conn_id}
+      let closing_flow ~conn_id ~ip ~port =
+        eupd @@ `Closing_connection {ip; port; conn_id}
 
-        let closed_flow ~conn_id:_ ~ip ~port =
-          () (*goto*)
-
-      end
-
-      module Udp = struct
-
-        let writing ~ip ~port ~data =
-          () (*goto*)
-
-      end
+      let closed_flow ~conn_id:_ ~ip ~port =
+        () (*goto*)
 
     end
 
@@ -580,7 +521,7 @@ module Notty_ui
               let conn = { conn with received_packets } in
               let conn = match protocol with
                 | Some (`Hello info) ->
-                  let pier_name = Some info.Protocol.T.name in
+                  let pier_name = Some info.Protocol_msg.T.name in
                   { conn with pier_name }
                 | _ -> conn
               in
@@ -616,10 +557,10 @@ module Notty_ui
     
     module Tcp_server = struct
 
-      let input_e = Input_event.Listen.Tcp.e 
+      let input_e = Input_event.Listen.e 
 
       let latencies_e =
-        let open Protocol.T in
+        let open Protocol_msg.T in
         let input_e =
           input_e
           |> E.fmap (function
@@ -636,7 +577,7 @@ module Notty_ui
       let latencies_s = S.hold ~eq:Eq.never Conn_id_map.empty latencies_e
 
       let bandwidths_e =
-        let open Protocol.T in
+        let open Protocol_msg.T in
         let input_e =
           input_e
           |> E.fmap (function
@@ -670,10 +611,10 @@ module Notty_ui
 
     module Tcp_client = struct
 
-      let input_e = Input_event.Connect.Tcp.e 
+      let input_e = Input_event.Connect.e 
       
       let latencies_e =
-        let open Protocol.T in
+        let open Protocol_msg.T in
         let input_e =
           input_e
           |> E.fmap (function
@@ -690,7 +631,7 @@ module Notty_ui
       let latencies_s = S.hold ~eq:Eq.never Conn_id_map.empty latencies_e
 
       let bandwidths_e =
-        let open Protocol.T in
+        let open Protocol_msg.T in
         let input_e =
           input_e
           |> E.fmap (function
