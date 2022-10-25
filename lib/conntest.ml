@@ -7,32 +7,40 @@ let (let*) = Result.bind
 let (let+) x f = Result.map f x 
 
 module type S = sig
-  
-  module Listen : sig
 
-    val tcp : name:string -> port:int -> timeout:int -> unit
-    val udp : name:string -> port:int -> timeout:int -> unit
+  module Tcp : sig 
+
+    module Listen : sig 
+      val start : name:string -> port:int -> timeout:int -> unit
+    end
+
+    module Connect : sig
+      val start :
+        name:string ->
+        port:int ->
+        ip:Ipaddr.t ->
+        monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
+        timeout:int ->
+        'a Lwt.t
+    end
 
   end
 
-  module Connect : sig
+  module Udp : sig 
 
-    val tcp :
-      name:string ->
-      port:int ->
-      ip:Ipaddr.t ->
-      monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
-      timeout:int ->
-      'a Lwt.t
+    module Listen : sig 
+      val start : name:string -> port:int -> timeout:int -> unit
+    end
 
-    (*> goto add control of packet ringbuffer*)
-    val udp :
-      name:string ->
-      port:int ->
-      ip:Ipaddr.t ->
-      monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
-      timeout:int ->
-      'a Lwt.t
+    module Connect : sig
+      val start :
+        name:string ->
+        port:int ->
+        ip:Ipaddr.t ->
+        monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
+        timeout:int ->
+        'a Lwt.t
+    end
 
   end
 
@@ -154,23 +162,5 @@ module Make
   module Udp = Protocol.Make(Time)(Udp_flow)(O)(struct
     let subproto = `Udp
   end)
-
-  module Listen = struct
-
-    let tcp = Tcp.Listen.start 
-
-    let udp ~name ~port ~timeout =
-      failwith "todo"
-
-  end
-
-  module Connect = struct
-    
-    let tcp = Tcp.Connect.start
-
-    let udp ~name ~port ~ip ~monitor_bandwidth ~timeout =
-      failwith "todo"
-
-  end
 
 end

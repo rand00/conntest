@@ -30,7 +30,7 @@ module Main
     begin match input with
       | "tcp" :: port :: [] ->
         begin match int_of_string_opt port with
-          | Some port -> Ct.Listen.tcp ~name ~port ~timeout |> Result.ok
+          | Some port -> Ct.Tcp.Listen.start ~name ~port ~timeout |> Result.ok
           | None ->
             let msg =
               Fmt.str "try_register_listener: Port '%s' is malformed" port
@@ -39,7 +39,7 @@ module Main
         end
       | "udp" :: port :: [] ->
         begin match int_of_string_opt port with
-          | Some port -> Ct.Listen.udp ~name ~port ~timeout |> Result.ok
+          | Some port -> Ct.Udp.Listen.start ~name ~port ~timeout |> Result.ok
           | None ->
             let msg =
               Fmt.str "try_register_listener: Port '%s' is malformed" port
@@ -162,8 +162,8 @@ module Main
       end
       in
       match protocol with
-      | `Tcp -> Ct.Connect.tcp ~name ~port ~ip ~monitor_bandwidth ~timeout
-      | `Udp -> Ct.Connect.udp ~name ~port ~ip ~monitor_bandwidth ~timeout
+      | `Tcp -> Ct.Tcp.Connect.start ~name ~port ~ip ~monitor_bandwidth ~timeout
+      | `Udp -> Ct.Udp.Connect.start ~name ~port ~ip ~monitor_bandwidth ~timeout
     end
     |> lwt_result_flip_result >>= function
     | Ok () -> Lwt.return_unit
