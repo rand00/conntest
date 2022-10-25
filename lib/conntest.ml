@@ -6,43 +6,29 @@ module Output = Output
 let (let*) = Result.bind 
 let (let+) x f = Result.map f x 
 
+module type Protocol_S = sig 
+
+  module Listen : sig 
+    val start : name:string -> port:int -> timeout:int -> unit
+  end
+
+  module Connect : sig
+    val start :
+      name:string ->
+      port:int ->
+      ip:Ipaddr.t ->
+      monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
+      timeout:int ->
+      'a Lwt.t
+  end
+
+end
+
+
 module type S = sig
 
-  module Tcp : sig 
-
-    module Listen : sig 
-      val start : name:string -> port:int -> timeout:int -> unit
-    end
-
-    module Connect : sig
-      val start :
-        name:string ->
-        port:int ->
-        ip:Ipaddr.t ->
-        monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
-        timeout:int ->
-        'a Lwt.t
-    end
-
-  end
-
-  module Udp : sig 
-
-    module Listen : sig 
-      val start : name:string -> port:int -> timeout:int -> unit
-    end
-
-    module Connect : sig
-      val start :
-        name:string ->
-        port:int ->
-        ip:Ipaddr.t ->
-        monitor_bandwidth:< enabled : bool; packet_size : int; .. > ->
-        timeout:int ->
-        'a Lwt.t
-    end
-
-  end
+  module Tcp : Protocol_S
+  module Udp : Protocol_S
 
 end
 
