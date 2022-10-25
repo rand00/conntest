@@ -243,7 +243,9 @@ module Main
         exit 64
     in
     let ui_m = match ui_key with
-      | `Log -> (module Conntest.Output.Log_stdout () : Conntest.Output.S)
+      | `Log ->
+        let module Ui = Conntest.Output.Log_stdout () in
+        (module Ui : Conntest.Output.S)
       | `Notty ->
         Logs.set_level None;
         let module Ui = Conntest.Output.Notty_ui(Time)(Clock)(struct

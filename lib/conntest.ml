@@ -8,8 +8,8 @@ let (let+) x f = Result.map f x
 
 module type S = sig
 
-  type stack
-  type udp_error
+  (* type stack *)
+  (* type udp_error *)
   
   module Listen : sig
 
@@ -50,8 +50,7 @@ module Make
     (Time : Mirage_time.S)
     (S : Tcpip.Stack.V4V6)
     (Sv : STACK_V with type t = S.t)
-    (Tcp_output : Output.S)
-    (Udp_output : Output.S)
+    (O : Output.S)
 = struct
 
   (* type stack = S.t *)
@@ -87,12 +86,13 @@ module Make
 
   end
   
-  module Tcp = Protocol.Make(Time)(Tcp_flow)(Tcp_output)
+  module Tcp = Protocol.Make(Time)(Tcp_flow)(O)(struct
+    let subproto = `Tcp
+  end)
 
   module Listen = struct
 
-    let tcp ~name ~port ~timeout =
-      failwith "todo"
+    let tcp = Tcp.Listen.start 
 
     let udp ~name ~port ~timeout =
       failwith "todo"
@@ -101,8 +101,7 @@ module Make
 
   module Connect = struct
     
-    let tcp ~name ~port ~ip ~monitor_bandwidth ~timeout =
-      failwith "todo"
+    let tcp = Tcp.Connect.start
 
     let udp ~name ~port ~ip ~monitor_bandwidth ~timeout =
       failwith "todo"

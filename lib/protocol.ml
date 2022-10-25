@@ -34,10 +34,17 @@ module type FLOW = sig
   
 end
 
+module type INFO = sig
+
+  val subproto : Types.protocol
+
+end
+
 module Make
     (Time : Mirage_time.S)
     (Flow : FLOW)
     (O : Output.S)
+    (Info : INFO)
 = struct
 
   open Lwt.Infix 
@@ -51,6 +58,13 @@ module Make
       dst_port : int;
       conn_id : string;
       progress : unit -> unit Lwt.t;
+    }
+
+    let pier_of_ctx ctx = Types.Pier.{
+      protocol = Info.subproto;
+      ip = ctx.dst;
+      port = ctx.dst_port;
+      conn_id = ctx.conn_id;
     }
 
     let start ~name ~port ~timeout =
@@ -75,7 +89,7 @@ module Make
           end
         | `Done v -> Lwt_result.return v
       and read_n_packets_ignoring_data ~ctx ~n ~more_data =
-        let { conn_id; dst; dst_port; _ } = ctx in
+        let pier = pier_of_ctx ctx in
         let ignore_data = true in
         let rec aux ?more_data n =
           if n <= 0 then Lwt_result.return more_data else
@@ -84,19 +98,18 @@ module Make
             in
             let header = packet.Packet.T.header in
             let protocol = None in
-            O.received_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+            O.received_packet ~pier ~header ~protocol;
             aux ?more_data (pred n)
         in
         aux n ?more_data
       and handle_packet ~ctx ~packet ~more_data =
-        let { conn_id; dst; dst_port; _ } = ctx in
+        let pier = pier_of_ctx ctx in
         let header = packet.Packet.T.header in
         let* protocol = packet.data |> Protocol_msg.of_cstruct |> Lwt.return in
         match protocol with
         | `Hello hello ->
           let protocol = Some protocol in
-          O.received_packet ~conn_id ~ip:dst ~port:dst_port
-            ~header ~protocol;
+          O.received_packet ~pier ~header ~protocol;
           let protocol = `Hello Protocol_msg.T.{ name } in
           let* () = respond ~ctx ~header ~protocol in
           let* packet, more_data = read_packet ~ctx ?more_data () in
@@ -105,8 +118,7 @@ module Make
           begin match bwm.Protocol_msg.T.direction with
             | `Up ->
               let protocol = Some protocol in
-              O.received_packet ~conn_id ~ip:dst ~port:dst_port
-                ~header ~protocol;
+              O.received_packet ~pier ~header ~protocol;
               let* more_data =
                 read_n_packets_ignoring_data
                   ~ctx
@@ -117,8 +129,7 @@ module Make
               handle_packet ~ctx ~packet ~more_data
             | `Down -> 
               let protocol = Some protocol in
-              O.received_packet ~conn_id ~ip:dst ~port:dst_port
-                ~header ~protocol;
+              O.received_packet ~pier ~header ~protocol;
               let n = bwm.Protocol_msg.T.n_packets in
               let data =
                 String.make bwm.packet_size '%'
@@ -130,8 +141,7 @@ module Make
           end
         | `Latency `Ping ->
           let protocol = Some protocol in
-          O.received_packet ~conn_id ~ip:dst ~port:dst_port
-            ~header ~protocol;
+          O.received_packet ~pier ~header ~protocol;
           let header = packet.header in
           let protocol = `Latency `Pong in
           let* () = respond ~ctx ~header ~protocol in
@@ -139,27 +149,27 @@ module Make
           handle_packet ~ctx ~packet ~more_data
         | `Latency `Pong -> 
           let protocol = Some protocol in
-          O.received_packet ~conn_id ~ip:dst ~port:dst_port
-            ~header ~protocol;
+          O.received_packet ~pier ~header ~protocol;
           let* packet, more_data = read_packet ~ctx ?more_data () in
           handle_packet ~ctx ~packet ~more_data
       and respond ~ctx ~header ~protocol =
-        let { flow; dst; dst_port; conn_id } = ctx in
+        let pier = pier_of_ctx ctx in
         let data = protocol |> Protocol_msg.to_cstruct in
         let response = Packet.to_cstructs ~header ~data in
-        let* () = Flow.writev flow response in
+        let* () = Flow.writev ctx.flow response in
         ctx.progress () >>= fun () ->
         let protocol = Some protocol in
-        O.sent_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+        O.sent_packet ~pier ~header ~protocol;
         Lwt_result.return ()
       and respond_with_n_copies ~ctx ~n ~header ~data =
+        let pier = pier_of_ctx ctx in
         if n <= 0 then Lwt_result.return () else 
           let { flow; dst; dst_port; conn_id } = ctx in
           let response = Packet.to_cstructs ~header ~data in
           let* () = Flow.writev flow response in
           ctx.progress () >>= fun () ->
           let protocol = None in
-          O.sent_packet ~conn_id ~ip:dst ~port:dst_port ~header ~protocol;
+          O.sent_packet ~pier ~header ~protocol;
           let n = pred n in
           respond_with_n_copies ~ctx ~n ~header ~data 
       in
@@ -167,14 +177,15 @@ module Make
         Mirage_runtime.at_exit (fun () -> Flow.close flow);
         let dst, dst_port = Flow.dst flow in
         let conn_id = Uuidm.(v `V4 |> to_string) in
-        O.new_connection ~conn_id ~ip:dst ~port:dst_port;
+        let sleep_ns = Time.sleep_ns in
+        let timeout_ns = ns_of_sec (float timeout) in
+        let timeout_state = Timeout.make ~sleep_ns ~timeout_ns in
+        let progress () = Timeout.progress timeout_state in
+        let ctx = { flow; dst; dst_port; conn_id; progress } in
+        let pier = pier_of_ctx ctx in
         Lwt.catch
           (fun () ->
-              let sleep_ns = Time.sleep_ns in
-              let timeout_ns = ns_of_sec (float timeout) in
-              let timeout_state = Timeout.make ~sleep_ns ~timeout_ns in
-              let progress () = Timeout.progress timeout_state in
-              let ctx = { flow; dst; dst_port; conn_id; progress } in
+              O.new_connection ~pier;
               let handle_t =
                 let* packet, more_data = read_packet ~ctx () in 
                 handle_packet ~ctx ~packet ~more_data
@@ -182,17 +193,17 @@ module Make
               Timeout.cancel_on_timeout timeout_state handle_t;
               handle_t >>= function
               | Ok () ->
-                O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
+                O.closing_connection ~pier;
                 Flow.close flow
               | Error `Msg err ->
-                O.error ~conn_id ~ip:dst ~port:dst_port ~err;
-                O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
+                O.error ~pier ~err;
+                O.closing_connection ~pier;
                 Flow.close flow
           )
           (fun exn -> 
               let err = Printexc.to_string exn in
-              O.error ~conn_id ~ip:dst ~port:dst_port ~err;
-              O.closing_connection ~conn_id ~ip:dst ~port:dst_port;
+              O.error ~pier ~err;
+              O.closing_connection ~pier;
               Flow.close flow
           )
       in
@@ -200,7 +211,7 @@ module Make
         Flow.unlisten ~port |> Lwt.return
       );
       Flow.listen ~port callback;
-      O.registered_listener ~port
+      O.registered_listener ~proto:Info.subproto ~port
 
   end
 
@@ -213,9 +224,16 @@ module Make
       progress : unit -> unit Lwt.t;
     }
 
+    let make_pier ~conn_id ~ip ~port = Types.Pier.{
+      protocol = Info.subproto;
+      ip;
+      port;
+      conn_id;
+    }
+    
     let sleep_ns_before_retry = ns_of_sec 1.
 
-    let tcp ~name ~port ~ip ~monitor_bandwidth ~timeout =
+    let start ~name ~port ~ip ~monitor_bandwidth ~timeout =
       let open Lwt_result.Syntax in
       let module O = O.Connect in
       let bandwidth_testdata_str =
@@ -224,17 +242,18 @@ module Make
       let n_bandwidth_packets =
         2000. *. 128e3 /. float monitor_bandwidth#packet_size |> truncate
       in
-      let conn_id = Uuidm.(v `V4 |> to_string) 
+      let conn_id = Uuidm.(v `V4 |> to_string) in
+      let pier = make_pier ~conn_id ~ip ~port 
       in
       let rec loop_try_connect () =
-        O.connecting ~conn_id ~ip ~port;
+        O.connecting ~pier;
         Flow.create_connection (ip, port) >>= function
         | Error (`Msg err) ->
-          O.error_connection ~conn_id ~ip ~port ~err;
+          O.error_connection ~pier ~err;
           Time.sleep_ns sleep_ns_before_retry >>= fun () ->
           loop_try_connect ()
         | Ok flow ->
-          O.connected ~conn_id ~ip ~port;
+          O.connected ~pier;
           Mirage_runtime.at_exit (fun () -> Flow.close flow);
           let sleep_ns = Time.sleep_ns in
           let timeout_ns = ns_of_sec (float timeout) in
@@ -257,16 +276,16 @@ module Make
           in
           handle_t >>= function
           | Ok _ ->
-            O.closing_flow ~conn_id ~ip ~port;
+            O.closing_flow ~pier;
             Flow.close flow >>= fun () ->
-            O.closed_flow ~conn_id ~ip ~port;
+            O.closed_flow ~pier;
             Time.sleep_ns sleep_ns_before_retry >>= fun () ->
             loop_try_connect ()
           | Error err ->
-            O.error ~conn_id ~ip ~port ~err;
-            O.closing_flow ~conn_id ~ip ~port;
+            O.error ~pier ~err;
+            O.closing_flow ~pier;
             Flow.close flow >>= fun () ->
-            O.closed_flow ~conn_id ~ip ~port;
+            O.closed_flow ~pier;
             Time.sleep_ns sleep_ns_before_retry >>= fun () ->
             loop_try_connect ()
       and write_more ~ctx ~conn_state =
@@ -333,7 +352,7 @@ module Make
         in
         ctx.progress () >>= fun () ->
         let protocol = Some protocol in
-        O.sent_packet ~conn_id ~ip ~port ~header ~protocol;
+        O.sent_packet ~pier ~header ~protocol;
         let ctx =
           let packet_index = succ ctx.packet_index in
           { ctx with packet_index }
@@ -355,7 +374,7 @@ module Make
             let* () = Flow.writev ctx.flow data in
             ctx.progress () >>= fun () ->
             let protocol = None in
-            O.sent_packet ~conn_id ~ip ~port ~header ~protocol;
+            O.sent_packet ~pier ~header ~protocol;
             loop ~packet_index:(succ packet_index) (pred n)
         in
         let+ packet_index = loop ~packet_index:ctx.packet_index n in
@@ -417,7 +436,7 @@ module Make
                   .. as there can be so many edgecases that I don't want to catch
                      * < this would need some 'expected' param, or returning header * protocol
               *)
-              O.received_packet ~conn_id ~ip ~port ~header ~protocol;
+              O.received_packet ~pier ~header ~protocol;
               more_data
             | `Unfinished packet ->
               read_packet ~ctx ~unfinished_packet:packet ~ignore_protocol ()
