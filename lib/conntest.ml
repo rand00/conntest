@@ -64,7 +64,7 @@ module Make
     let unlisten ~port =
       S.TCP.unlisten tcp_stack ~port 
 
-    let create_connection dst =
+    let create_connection ~id:_ dst =
       S.TCP.create_connection tcp_stack dst
       |> error_to_msg S.TCP.pp_error
 
@@ -86,28 +86,46 @@ module Make
       source : Cstruct.t Mirage_flow.or_eof Lwt_mvar.t;
       pier : Ipaddr.t;
       pier_port : int;
+      conn_id : string;
     }
 
     let udp_stack = S.udp Sv.stack
 
-    (*> goto pass flow to callback*)
-    (*goto howto;
-      * read src-ip, src-port, packet-header-conn_id
-        * put these into some datastructure tracking all 'connections'
-          * brian; mutable?
-          * then some single recursive proc reads all input-datagrams
-            * and puts them into corresponding flow's based on conn-id
+    module Conn_map = Map.Make(String)
+
+    (*> Warning: but don't know why you would run two instances of protocol*)
+    let conn_map = ref (Conn_map.empty)
+
+    (*> goto check how often this is called - for now it believes it's alone
+      * .. once per port opened
+        * @brian; is it okay that the mutable ref is shared between 'listen's?
     *)
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
         match Packet.Tcp.init ~ignore_data:true data with
         | Ok (`Done (packet, _rest)) ->
-          (*goto check/register connection-id -> flow*)
-          (*goto only call user-callback with flow on first packet recvd*)
-          let source = Lwt_mvar.create @@ `Data data in
-          let flow = { source; pier = src; pier_port = src_port } in
-          user_callback flow
-        (*goo*)
+          let conn_id = packet.Packet.T.header.connection_id in
+          begin match Conn_map.find_opt conn_id !conn_map with
+          | None -> 
+            (*> goto only pass data here if packet-index = 0
+              * in any case this should depend on ringbuffer (local to conn_id)
+                * .. this can be put in 'flow'?
+            *)
+            let source = Lwt_mvar.create @@ `Data data in
+            let flow = { source; pier = src; pier_port = src_port; conn_id } in
+            let conn_map' = Conn_map.add conn_id flow !conn_map in
+            conn_map := conn_map';
+            user_callback flow
+          | Some flow ->
+            (*> goto put into ringbuffer instead, and let that control when
+              .. packet is put into mvar
+                * @problem; does this mvar-putting loop need to be async, to be able to loop?
+            *)
+            (*> goto: problem: this can block 
+              * @idea; should this be an Lwt_stream.t ? 
+            *)
+            Lwt_mvar.put flow.source @@ `Data data 
+          end
         (*> goto change interface of 'listen' to return Result.t instead*)
         | Ok (`Unfinished _) ->
           failwith "Udp_flow: `Unfinished is unsupported for UDP"
@@ -119,9 +137,9 @@ module Make
     let unlisten ~port =
       S.UDP.unlisten udp_stack ~port 
 
-    let create_connection (pier, pier_port) =
+    let create_connection ~id (pier, pier_port) =
       let source = Lwt_mvar.create_empty () in
-      Lwt_result.return { source; pier; pier_port }
+      Lwt_result.return { source; pier; pier_port; conn_id = id }
 
     let read flow =
       Lwt_mvar.take flow.source >|= fun res ->
@@ -140,8 +158,10 @@ module Make
 
     let dst flow = flow.pier, flow.pier_port
     
-    (*goto should more happen here?*)
-    let close flow = Lwt.return_unit
+    let close flow =
+      let conn_map' = Conn_map.remove flow.conn_id !conn_map in
+      conn_map := conn_map';
+      Lwt.return_unit
     
   end
   

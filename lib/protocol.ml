@@ -24,7 +24,8 @@ module type FLOW = sig
   val listen : port:int -> (t -> unit Lwt.t) -> unit
   val unlisten : port:int -> unit
 
-  val create_connection : (Ipaddr.t * int) -> (t, _ error) Lwt_result.t
+  val create_connection :
+    id:string -> (Ipaddr.t * int) -> (t, _ error) Lwt_result.t
   
   val read : t -> (read, _ error) Lwt_result.t
   val writev : t -> Cstruct.t list -> (unit, _ error) Lwt_result.t
@@ -247,7 +248,7 @@ module Make
       in
       let rec loop_try_connect () =
         O.connecting ~pier;
-        Flow.create_connection (ip, port) >>= function
+        Flow.create_connection ~id:conn_id (ip, port) >>= function
         | Error (`Msg err) ->
           O.error_connection ~pier ~err;
           Time.sleep_ns sleep_ns_before_retry >>= fun () ->
