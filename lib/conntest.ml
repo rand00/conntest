@@ -79,6 +79,36 @@ module Make
     let subproto = `Tcp
   end)
 
+  module Ring = struct
+
+    type 'a t = {
+      ring : 'a option array;
+      index : int;
+    }
+
+    let make n : 'a t =
+      let ring = Array.make n None in
+      let index = 0 in
+      { ring; index }
+
+    let insert field r =
+      let index = succ r.index mod Array.length r.ring in
+      r.ring.(index) <- Some field;
+      { r with index }
+
+    let get_previous r i =
+      let len = Array.length r.ring in
+      if i >= len then None else
+        let ci = r.index in
+        let i_wrapped =
+          if i <= ci then ci - i else len + (ci - i)
+        in
+        r.ring.(i_wrapped)
+    
+    let get_latest r = get_previous r 0
+
+  end
+
   module Udp_flow = struct
     (* include S.UDP *)
 
@@ -96,6 +126,15 @@ module Make
     (*> Warning: but don't know why you would run two instances of protocol*)
     let conn_map = ref (Conn_map.empty)
 
+    let ring_size = 5
+
+    type ring_field = {
+      data : Cstruct.t option; (*None => packet is late*)
+      packet_index : int;
+      (*< goto this field could be avoided, as packet bears this info,
+        .. and it's calculated from prev packet otherwise*)
+    }
+
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
         match Packet.Tcp.init ~ignore_data:true data with
@@ -103,13 +142,13 @@ module Make
           let conn_id = packet.Packet.T.header.connection_id in
           begin match Conn_map.find_opt conn_id !conn_map with
           | None -> 
-            (*> goto only pass data here if packet-index = 0
-              * in any case this should depend on ringbuffer (local to conn_id)
-                * .. this can be put in 'flow'?
-            *)
             let source = Lwt_mvar.create_empty () in  (* @@ `Data data *)
             (*> goto insert packet in ringbuffer*)
-            let ringbuffer = failwith "todo" in
+            let ringbuffer =
+              let data = Some data in
+              Ring.make 5
+              |> Ring.insert { data; packet_index }
+            in
             (*goto startup async loop that inserts latest available
               ringbuffer packet in source-mvar
               * @problem; if user_callback doesn't loop quickly enough over
