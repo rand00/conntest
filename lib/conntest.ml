@@ -96,10 +96,6 @@ module Make
     (*> Warning: but don't know why you would run two instances of protocol*)
     let conn_map = ref (Conn_map.empty)
 
-    (*> goto check how often this is called - for now it believes it's alone
-      * .. once per port opened
-        * @brian; is it okay that the mutable ref is shared between 'listen's?
-    *)
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
         match Packet.Tcp.init ~ignore_data:true data with
@@ -111,20 +107,49 @@ module Make
               * in any case this should depend on ringbuffer (local to conn_id)
                 * .. this can be put in 'flow'?
             *)
-            let source = Lwt_mvar.create @@ `Data data in
-            let flow = { source; pier = src; pier_port = src_port; conn_id } in
+            let source = Lwt_mvar.create_empty () in  (* @@ `Data data *)
+            (*> goto insert packet in ringbuffer*)
+            let ringbuffer = failwith "todo" in
+            (*goto startup async loop that inserts latest available
+              ringbuffer packet in source-mvar
+              * @problem; if user_callback doesn't loop quickly enough over
+                source-mvar, then packets will get lost
+                * @solution; make source-mvar into source-stream (infinite)
+                  * this way:
+                    * ringbuffer is only about receiving
+                    * source-stream is only about buffering for user_callback
+                      * @problem; can lead to memory-leak if user_callback is
+                        generally too slow
+                        * @solution; just use mvar - client shall be faster than
+                          data comes in
+            *)
+            let flow = {
+              source;
+              pier = src;
+              pier_port = src_port;
+              conn_id;
+              ringbuffer;
+            } in
             let conn_map' = Conn_map.add conn_id flow !conn_map in
             conn_map := conn_map';
+            (*> goto: this blocks, as the lifetime of this callback is longer
+              * .. this depends on semantics of S.UDP.listen -
+                * does it spin up all possible callbacks when recvd packet?
+                  * or does it block recv nxt pkt on blocking callback?
+              * @solution;
+                * alternative is just to run this async
+            *)
             user_callback flow
           | Some flow ->
-            (*> goto put into ringbuffer instead, and let that control when
-              .. packet is put into mvar
-                * @problem; does this mvar-putting loop need to be async, to be able to loop?
+            (*> goto do this in async ringbuffer loop instead*)
+            (* Lwt_mvar.put flow.source @@ `Data data
             *)
-            (*> goto: problem: this can block 
-              * @idea; should this be an Lwt_stream.t ? 
-            *)
-            Lwt_mvar.put flow.source @@ `Data data 
+            (*> goto insert packet in ringbuffer*)
+            let ringbuffer = failwith "todo" in
+            let flow = { flow with ringbuffer } in
+            let conn_map' = Conn_map.add conn_id flow !conn_map in
+            conn_map := conn_map';
+            Lwt.return_unit
           end
         (*> goto change interface of 'listen' to return Result.t instead*)
         | Ok (`Unfinished _) ->
