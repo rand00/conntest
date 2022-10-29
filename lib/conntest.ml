@@ -91,6 +91,8 @@ module Make
       let index = 0 in
       { ring; index }
 
+    let length r = Array.length r.ring
+
     let insert field r =
       let index = succ r.index mod Array.length r.ring in
       r.ring.(index) <- Some field;
@@ -122,12 +124,12 @@ module Make
     }
     
     type t = {
+      sink : ring_field Lwt_mvar.t;
       source : Cstruct.t Mirage_flow.or_eof Lwt_mvar.t;
       port : int;
       pier : Ipaddr.t;
       pier_port : int;
       conn_id : string;
-      ringbuffer : ring_field Ring.t;
       feeder : unit Lwt.t;
     }
 
@@ -150,8 +152,42 @@ module Make
               * @solution; just use mvar - client shall be faster than
                 data comes in
     *)
-    let feed_source ~source ~ringbuffer =
-      failwith "todo"
+    (*goto howto;
+      * spec;
+        * this recursive async thread just reads ringbuffer and inserts in source
+          * @problem; how to know when ringbuffer has gotten a new packet?
+            * @solution; add 'sink' param (Lwt_mvar.t) to insert packet via
+              * so this proc gets full responsibility for ringbuffer
+    *)
+    let feed_source ~sink ~source =
+      let rec aux ring =
+        Lwt_mvar.take sink >>= fun ring_field ->
+        let expected_packet_index =
+          match Ring.get_latest ring with
+          | None -> 0
+          | Some v -> succ v.packet_index
+        in
+        let packet_index_diff =
+          ring_field.packet_index - expected_packet_index
+        in
+        (*goto howto;
+          * if packet_index_diff < 0 then
+            * insert ring_field in prev position
+          * else if .._diff >= 0 then
+            * for i = 0 to pred .._diff
+              * insert { data = None; ..}
+            * then insert ring_field at newest position
+          * iterate through ring
+            * for each ring_field.packet_index > last_seen_packet_index + data <> None
+              * insert data in source mvar
+                * @problem; this should not block, to avoid sink blocking in listen callback?
+                  * .. as these blocking callbacks (if not waiting on eachother),
+                    will maybe not insert their ring_field in correct order recvd
+                    * @effect; will observe out-of-order even though not true
+        *)
+        failwith "todo"
+      in
+      aux @@ Ring.make ring_size
     
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
@@ -160,21 +196,21 @@ module Make
           let conn_id = packet.Packet.T.header.connection_id in
           begin match Conn_map.find_opt conn_id !conn_map with
           | None -> 
-            let source = Lwt_mvar.create_empty () in  (* @@ `Data data *)
-            let ringbuffer =
+            let ring_field =
               let data = Some data in
               let packet_index = packet.Packet.T.header.index in
-              Ring.make ring_size
-              |> Ring.insert { data; packet_index }
+              { data; packet_index }
             in
-            let feeder = feed_source ~source ~ringbuffer in
+            let sink = Lwt_mvar.create ring_field in
+            let source = Lwt_mvar.create_empty () in
+            let feeder = feed_source ~sink ~source in
             let flow = {
+              sink;
               source;
               port;
               pier = src;
               pier_port = src_port;
               conn_id;
-              ringbuffer;
               feeder;
             } in
             let conn_map' = Conn_map.add conn_id flow !conn_map in
@@ -188,14 +224,12 @@ module Make
             *)
             user_callback flow
           | Some flow ->
-            (*> goto do this in async ringbuffer loop instead*)
-            (* Lwt_mvar.put flow.source @@ `Data data
-            *)
-            (*> goto insert packet in ringbuffer (a mutation)*)
-            (*> goto problem; flow is kept for a long time by user code
-              * .. so it needs to be mutated instead of Conn_map begin updated!
-            *)
-            Lwt.return_unit
+            let ring_field =
+              let data = Some data in
+              let packet_index = packet.Packet.T.header.index in
+              { data; packet_index }
+            in
+            Lwt_mvar.put flow.sink ring_field
           end
         (*> goto change interface of 'listen' to return Result.t instead*)
         | Ok (`Unfinished _) ->
@@ -252,17 +286,17 @@ module Make
               * here it need be returned right away 
     *)
     let create_connection ~id (pier, pier_port) =
+      let sink = Lwt_mvar.create_empty () in
       let source = Lwt_mvar.create_empty () in
       let port = Udp_port.allocate () in
-      let ringbuffer = Ring.make ring_size in
-      let feeder = feed_source ~source ~ringbuffer in
+      let feeder = feed_source ~sink ~source in
       let flow = {
+        sink;
         source;
         port;
         pier;
         pier_port;
         conn_id = id;
-        ringbuffer;
         feeder;
       } in
       let conn_map' = Conn_map.add id flow !conn_map in
