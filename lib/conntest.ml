@@ -112,11 +112,23 @@ module Make
   module Udp_flow = struct
     (* include S.UDP *)
 
+    let ring_size = 5
+
+    type ring_field = {
+      data : Cstruct.t option; (*None => packet is late*)
+      packet_index : int;
+      (*< goto this field could be avoided, as packet bears this info,
+        .. and it's calculated from prev packet otherwise*)
+    }
+    
     type t = {
       source : Cstruct.t Mirage_flow.or_eof Lwt_mvar.t;
+      port : int;
       pier : Ipaddr.t;
       pier_port : int;
       conn_id : string;
+      ringbuffer : ring_field Ring.t;
+      feeder : unit Lwt.t;
     }
 
     let udp_stack = S.udp Sv.stack
@@ -126,15 +138,21 @@ module Make
     (*> Warning: but don't know why you would run two instances of protocol*)
     let conn_map = ref (Conn_map.empty)
 
-    let ring_size = 5
-
-    type ring_field = {
-      data : Cstruct.t option; (*None => packet is late*)
-      packet_index : int;
-      (*< goto this field could be avoided, as packet bears this info,
-        .. and it's calculated from prev packet otherwise*)
-    }
-
+    (*goto insert latest available ringbuffer packet in source-mvar
+     * @problem; if user_callback doesn't loop quickly enough over
+      source-mvar, then packets will get lost
+       * @solution; make source-mvar into source-stream (infinite)
+        * this way:
+          * ringbuffer is only about receiving
+          * source-stream is only about buffering for user_callback
+            * @problem; can lead to memory-leak if user_callback is
+              generally too slow
+              * @solution; just use mvar - client shall be faster than
+                data comes in
+    *)
+    let feed_source ~source ~ringbuffer =
+      failwith "todo"
+    
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
         match Packet.Tcp.init ~ignore_data:true data with
@@ -143,31 +161,21 @@ module Make
           begin match Conn_map.find_opt conn_id !conn_map with
           | None -> 
             let source = Lwt_mvar.create_empty () in  (* @@ `Data data *)
-            (*> goto insert packet in ringbuffer*)
             let ringbuffer =
               let data = Some data in
-              Ring.make 5
+              let packet_index = packet.Packet.T.header.index in
+              Ring.make ring_size
               |> Ring.insert { data; packet_index }
             in
-            (*goto startup async loop that inserts latest available
-              ringbuffer packet in source-mvar
-              * @problem; if user_callback doesn't loop quickly enough over
-                source-mvar, then packets will get lost
-                * @solution; make source-mvar into source-stream (infinite)
-                  * this way:
-                    * ringbuffer is only about receiving
-                    * source-stream is only about buffering for user_callback
-                      * @problem; can lead to memory-leak if user_callback is
-                        generally too slow
-                        * @solution; just use mvar - client shall be faster than
-                          data comes in
-            *)
+            let feeder = feed_source ~source ~ringbuffer in
             let flow = {
               source;
+              port;
               pier = src;
               pier_port = src_port;
               conn_id;
               ringbuffer;
+              feeder;
             } in
             let conn_map' = Conn_map.add conn_id flow !conn_map in
             conn_map := conn_map';
@@ -183,11 +191,10 @@ module Make
             (*> goto do this in async ringbuffer loop instead*)
             (* Lwt_mvar.put flow.source @@ `Data data
             *)
-            (*> goto insert packet in ringbuffer*)
-            let ringbuffer = failwith "todo" in
-            let flow = { flow with ringbuffer } in
-            let conn_map' = Conn_map.add conn_id flow !conn_map in
-            conn_map := conn_map';
+            (*> goto insert packet in ringbuffer (a mutation)*)
+            (*> goto problem; flow is kept for a long time by user code
+              * .. so it needs to be mutated instead of Conn_map begin updated!
+            *)
             Lwt.return_unit
           end
         (*> goto change interface of 'listen' to return Result.t instead*)
@@ -201,9 +208,66 @@ module Make
     let unlisten ~port =
       S.UDP.unlisten udp_stack ~port 
 
+    module Udp_port = struct 
+    
+      module PSet = Set.Make(Int)
+
+      let used_ports = ref PSet.empty
+
+      (*goto depends on Random.init done somewhere*)
+      let rec allocate () =
+        let port = 10_000 + Random.int 50_000 in
+        if PSet.mem port !used_ports then
+          allocate ()
+        else
+          let used_ports' = PSet.add port !used_ports in
+          used_ports := used_ports';
+          port
+
+      let free port =
+        let used_ports' = PSet.remove port !used_ports in
+        used_ports := used_ports'
+      
+    end
+
+    (*goto problem; how to setup a two-way connection here?
+      * notes;
+        * it's easy to get src and src_port when receiving packet
+          * (but don't know if it works to send back to this)
+      * @solution
+        * try using a specific sending port when sending first packet
+          * < keep track of these used ports 
+          * register this port in flow too
+            * which shall be used
+              * when 'write'
+              * to setup a listener here on 'create_connection'
+                * and ringbuffer should be created by 'listen' instead then
+                * @problem; how to reuse the flow between listen and create_connection?
+    *)
+    (*> goto this also need to startup async ringbuffer/source handler
+      .. maybe reuse code with 'listen'?
+        * @brian; can this just call 'listen' instead of creating own flow?
+          * no; callback is run when first packet is received
+            * and this is too late to receive 'flow'
+              * here it need be returned right away 
+    *)
     let create_connection ~id (pier, pier_port) =
       let source = Lwt_mvar.create_empty () in
-      Lwt_result.return { source; pier; pier_port; conn_id = id }
+      let port = Udp_port.allocate () in
+      let ringbuffer = Ring.make ring_size in
+      let feeder = feed_source ~source ~ringbuffer in
+      let flow = {
+        source;
+        port;
+        pier;
+        pier_port;
+        conn_id = id;
+        ringbuffer;
+        feeder;
+      } in
+      let conn_map' = Conn_map.add id flow !conn_map in
+      conn_map := conn_map';
+      Lwt_result.return flow
 
     let read flow =
       Lwt_mvar.take flow.source >|= fun res ->
@@ -212,19 +276,23 @@ module Make
     (*> Note: it's important that all cstructs are written at once for ordering*)
     let writev flow datas =
       let data = Cstruct.concat datas in
+      let src_port = flow.port in
       let dst, dst_port = flow.pier, flow.pier_port in
       (*< spec:
         * listen-case: flow is only given to callback on recv first packet
         * connect-case: flow already has dst + dst_port
       *)
-      S.UDP.write ~dst ~dst_port udp_stack data
+      S.UDP.write ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
 
     let dst flow = flow.pier, flow.pier_port
-    
+
+    (*goto cancel async thread that feeds data from ringbuffer to source*)
     let close flow =
+      Lwt.cancel flow.feeder;
       let conn_map' = Conn_map.remove flow.conn_id !conn_map in
       conn_map := conn_map';
+      Udp_port.free flow.port;
       Lwt.return_unit
     
   end
