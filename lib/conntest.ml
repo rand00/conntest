@@ -157,6 +157,12 @@ module Make
     (*> Warning: but don't know why you would run two instances of protocol*)
     let conn_map = ref (Conn_map.empty)
 
+    (*> goto fix packet-index's in Protocol as they are expected to behave
+        differently here and now:
+        * each recvd packet should have an index always incrementing
+          * tracked by sender
+          * meaning: how many packets has been sent by sender 
+    *)
     let feed_source ~sink ~source =
       let push_until_packet ~ring ~ring_field ~packet_index_diff =
         let final_packet_index = ring_field.packet_index in
@@ -249,13 +255,6 @@ module Make
             } in
             let conn_map' = Conn_map.add conn_id flow !conn_map in
             conn_map := conn_map';
-            (*> goto: this blocks, as the lifetime of this callback is longer
-              * .. this depends on semantics of S.UDP.listen -
-                * does it spin up all possible callbacks when recvd packet?
-                  * or does it block recv nxt pkt on blocking callback?
-              * @solution;
-                * alternative is just to run this async
-            *)
             user_callback flow
           | Some flow ->
             let ring_field =
@@ -298,27 +297,6 @@ module Make
       
     end
 
-    (*goto problem; how to setup a two-way connection here?
-      * notes;
-        * it's easy to get src and src_port when receiving packet
-          * (but don't know if it works to send back to this)
-      * @solution
-        * try using a specific sending port when sending first packet
-          * < keep track of these used ports 
-          * register this port in flow too
-            * which shall be used
-              * when 'write'
-              * to setup a listener here on 'create_connection'
-                * and ringbuffer should be created by 'listen' instead then
-                * @problem; how to reuse the flow between listen and create_connection?
-    *)
-    (*> goto this also need to startup async ringbuffer/source handler
-      .. maybe reuse code with 'listen'?
-        * @brian; can this just call 'listen' instead of creating own flow?
-          * no; callback is run when first packet is received
-            * and this is too late to receive 'flow'
-              * here it need be returned right away 
-    *)
     let create_connection ~id (pier, pier_port) =
       let sink = Lwt_stream.create_bounded (ring_size * 2) in
       let source = Lwt_stream.create_bounded (ring_size * 2) in
