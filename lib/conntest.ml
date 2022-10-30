@@ -122,10 +122,13 @@ module Make
       (*< goto this field could be avoided, as packet bears this info,
         .. and it's calculated from prev packet otherwise*)
     }
+
+    (*> Note: a stream is used to avoid blocking ringbuffer-handler*)
+    type 'a stream = 'a Lwt_stream.t * 'a Lwt_stream.bounded_push
     
     type t = {
-      sink : ring_field Lwt_mvar.t;
-      source : Cstruct.t Mirage_flow.or_eof Lwt_mvar.t;
+      sink : ring_field stream;
+      source : Cstruct.t Mirage_flow.or_eof stream;
       port : int;
       pier : Ipaddr.t;
       pier_port : int;
@@ -140,52 +143,35 @@ module Make
     (*> Warning: but don't know why you would run two instances of protocol*)
     let conn_map = ref (Conn_map.empty)
 
-    (*goto insert latest available ringbuffer packet in source-mvar
-     * @problem; if user_callback doesn't loop quickly enough over
-      source-mvar, then packets will get lost
-       * @solution; make source-mvar into source-stream (infinite)
-        * this way:
-          * ringbuffer is only about receiving
-          * source-stream is only about buffering for user_callback
-            * @problem; can lead to memory-leak if user_callback is
-              generally too slow
-              * @solution; just use mvar - client shall be faster than
-                data comes in
-    *)
-    (*goto howto;
-      * spec;
-        * this recursive async thread just reads ringbuffer and inserts in source
-          * @problem; how to know when ringbuffer has gotten a new packet?
-            * @solution; add 'sink' param (Lwt_mvar.t) to insert packet via
-              * so this proc gets full responsibility for ringbuffer
-    *)
     let feed_source ~sink ~source =
       let rec aux ring =
-        Lwt_mvar.take sink >>= fun ring_field ->
-        let expected_packet_index =
-          match Ring.get_latest ring with
-          | None -> 0
-          | Some v -> succ v.packet_index
-        in
-        let packet_index_diff =
-          ring_field.packet_index - expected_packet_index
-        in
-        (*goto howto;
-          * if packet_index_diff < 0 then
-            * insert ring_field in prev position
-          * else if .._diff >= 0 then
-            * for i = 0 to pred .._diff
-              * insert { data = None; ..}
-            * then insert ring_field at newest position
-          * iterate through ring
-            * for each ring_field.packet_index > last_seen_packet_index + data <> None
-              * insert data in source mvar
-                * @problem; this should not block, to avoid sink blocking in listen callback?
-                  * .. as these blocking callbacks (if not waiting on eachother),
-                    will maybe not insert their ring_field in correct order recvd
-                    * @effect; will observe out-of-order even though not true
-        *)
-        failwith "todo"
+        Lwt_stream.get (fst sink) >>= function
+        | None -> aux ring (*< goto guess this is okay (polling)?*)
+        | Some ring_field ->
+          let expected_packet_index =
+            match Ring.get_latest ring with
+            | None -> 0
+            | Some v -> succ v.packet_index
+          in
+          let packet_index_diff =
+            ring_field.packet_index - expected_packet_index
+          in
+          (*goto howto;
+            * if packet_index_diff < 0 then
+              * insert ring_field in prev position
+            * else if .._diff >= 0 then
+              * for i = 0 to pred .._diff
+                * insert { data = None; ..}
+              * then insert ring_field at newest position
+            * iterate through ring
+              * for each ring_field.packet_index > last_seen_packet_index + data <> None
+                * insert data in source mvar
+                  * @problem; this should not block, to avoid sink blocking in listen callback?
+                    * .. as these blocking callbacks (if not waiting on eachother),
+                      will maybe not insert their ring_field in correct order recvd
+                      * @effect; will observe out-of-order even though not true
+          *)
+          failwith "todo"
       in
       aux @@ Ring.make ring_size
     
@@ -201,8 +187,10 @@ module Make
               let packet_index = packet.Packet.T.header.index in
               { data; packet_index }
             in
-            let sink = Lwt_mvar.create ring_field in
-            let source = Lwt_mvar.create_empty () in
+            let sink = Lwt_stream.create_bounded (ring_size * 2) in
+            (snd sink)#push ring_field >>= fun () -> 
+            (*goto insert ring_field*)
+            let source = Lwt_stream.create_bounded (ring_size * 2) in
             let feeder = feed_source ~sink ~source in
             let flow = {
               sink;
@@ -229,7 +217,7 @@ module Make
               let packet_index = packet.Packet.T.header.index in
               { data; packet_index }
             in
-            Lwt_mvar.put flow.sink ring_field
+            (snd flow.sink)#push ring_field
           end
         (*> goto change interface of 'listen' to return Result.t instead*)
         | Ok (`Unfinished _) ->
