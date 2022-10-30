@@ -116,6 +116,9 @@ module Make
       in
       { r with ring = Array.map f r.ring }
 
+    (*> goto fix; the order for fold-left matters - which should be based on
+      ring-index; i.e. oldest first
+    *)
     let fold_left f acc r =
       let f acc = function
         | None -> acc
