@@ -236,7 +236,6 @@ module Make
             in
             let sink = Lwt_stream.create_bounded (ring_size * 2) in
             (snd sink)#push ring_field >>= fun () -> 
-            (*goto insert ring_field*)
             let source = Lwt_stream.create_bounded (ring_size * 2) in
             let feeder = feed_source ~sink ~source in
             let flow = {
@@ -336,6 +335,7 @@ module Make
       } in
       let conn_map' = Conn_map.add id flow !conn_map in
       conn_map := conn_map';
+      listen ~port (fun _flow -> Lwt.return_unit);
       Lwt_result.return flow
 
     (*> goto does 'next' fail if there havn't been put anything into stream?*)
@@ -357,8 +357,8 @@ module Make
 
     let dst flow = flow.pier, flow.pier_port
 
-    (*goto cancel async thread that feeds data from ringbuffer to source*)
     let close flow =
+      unlisten ~port:flow.port;
       Lwt.cancel flow.feeder;
       let conn_map' = Conn_map.remove flow.conn_id !conn_map in
       conn_map := conn_map';
