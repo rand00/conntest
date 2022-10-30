@@ -93,7 +93,7 @@ module Make
 
     let length r = Array.length r.ring
 
-    let insert field r =
+    let push field r =
       let index = succ r.index mod Array.length r.ring in
       r.ring.(index) <- Some field;
       { r with index }
@@ -108,6 +108,20 @@ module Make
         r.ring.(i_wrapped)
     
     let get_latest r = get_previous r 0
+
+    let map f r =
+      let f = function
+        | None -> None
+        | Some v -> Some (f v)
+      in
+      { r with ring = Array.map f r.ring }
+
+    let fold_left f acc r =
+      let f acc = function
+        | None -> acc
+        | Some v -> f acc v
+      in
+      Array.fold_left f acc r.ring
 
   end
 
@@ -144,9 +158,24 @@ module Make
     let conn_map = ref (Conn_map.empty)
 
     let feed_source ~sink ~source =
-      let rec aux ring =
+      let push_until_packet ~ring ~ring_field ~packet_index_diff =
+        let final_packet_index = ring_field.packet_index in
+        let rec aux ~ring = function
+          | 0 -> ring |> Ring.push ring_field
+          | packet_index_diff ->
+            let ring_field_not_received =
+              let packet_index = final_packet_index - packet_index_diff in
+              { packet_index; data = None }
+            in
+            let ring = ring |> Ring.push ring_field_not_received in
+            aux ~ring @@ pred packet_index_diff
+        in
+        aux ~ring packet_index_diff          
+      in
+      let rec aux ~last_feeded_packet_index ring =
         Lwt_stream.get (fst sink) >>= function
-        | None -> aux ring (*< goto guess this is okay (polling)?*)
+        | None -> aux ~last_feeded_packet_index ring
+        (*< goto guess this is okay (polling)?*)
         | Some ring_field ->
           let expected_packet_index =
             match Ring.get_latest ring with
@@ -156,24 +185,42 @@ module Make
           let packet_index_diff =
             ring_field.packet_index - expected_packet_index
           in
-          (*goto howto;
-            * if packet_index_diff < 0 then
-              * insert ring_field in prev position
-            * else if .._diff >= 0 then
-              * for i = 0 to pred .._diff
-                * insert { data = None; ..}
-              * then insert ring_field at newest position
-            * iterate through ring
-              * for each ring_field.packet_index > last_seen_packet_index + data <> None
-                * insert data in source mvar
-                  * @problem; this should not block, to avoid sink blocking in listen callback?
-                    * .. as these blocking callbacks (if not waiting on eachother),
-                      will maybe not insert their ring_field in correct order recvd
-                      * @effect; will observe out-of-order even though not true
-          *)
-          failwith "todo"
+          let ring =
+            if packet_index_diff < 0 then
+              (*> Note: this is just easier than calculating index for 'set'
+                 .. and ring shouldn't be long
+              *)
+              ring |> Ring.map (fun ring_field' ->
+                if ring_field'.packet_index = ring_field.packet_index then
+                  ring_field
+                else
+                  ring_field'
+              )
+              (*< goto here out-of-order also need to be tracked*)
+            else (*if packet_index_diff >= 0*)
+              push_until_packet ~ring ~ring_field ~packet_index_diff
+              (*< goto register dropped packet as 'lost' if not seen
+                * @idea; return the dropped packet from Ring.insert
+              *)
+          in
+          ring |> Ring.fold_left (fun acc ring_field' ->
+            acc >>= fun (last_feeded_packet_index, seen_empty_data) ->
+            let seen_empty_data = seen_empty_data || ring_field'.data = None in
+            let packet_index_is_newer =
+              ring_field'.packet_index > last_feeded_packet_index
+            in
+            if packet_index_is_newer && not seen_empty_data then
+              let data = `Data (Option.get ring_field'.data) in
+              (snd source)#push data >|= fun () ->
+              let last_feeded_packet_index = ring_field'.packet_index in
+              last_feeded_packet_index, seen_empty_data
+            else
+              Lwt.return (last_feeded_packet_index, seen_empty_data)
+          ) (Lwt.return (last_feeded_packet_index, false))
+          >>= fun (last_feeded_packet_index, _) ->
+          aux ~last_feeded_packet_index ring
       in
-      aux @@ Ring.make ring_size
+      aux ~last_feeded_packet_index:(-1) @@ Ring.make ring_size
     
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
@@ -274,8 +321,8 @@ module Make
               * here it need be returned right away 
     *)
     let create_connection ~id (pier, pier_port) =
-      let sink = Lwt_mvar.create_empty () in
-      let source = Lwt_mvar.create_empty () in
+      let sink = Lwt_stream.create_bounded (ring_size * 2) in
+      let source = Lwt_stream.create_bounded (ring_size * 2) in
       let port = Udp_port.allocate () in
       let feeder = feed_source ~sink ~source in
       let flow = {
@@ -291,8 +338,9 @@ module Make
       conn_map := conn_map';
       Lwt_result.return flow
 
+    (*> goto does 'next' fail if there havn't been put anything into stream?*)
     let read flow =
-      Lwt_mvar.take flow.source >|= fun res ->
+      Lwt_stream.next (fst flow.source) >|= fun res ->
       Ok res
 
     (*> Note: it's important that all cstructs are written at once for ordering*)
