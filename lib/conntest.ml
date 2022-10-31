@@ -98,14 +98,16 @@ module Make
       r.ring.(index) <- Some field;
       { r with index }
 
-    let get_previous r i =
+    let wrap_reverse_i r i =
+      assert (i >= 0);
       let len = Array.length r.ring in
       if i >= len then None else
         let ci = r.index in
-        let i_wrapped =
-          if i <= ci then ci - i else len + (ci - i)
-        in
-        r.ring.(i_wrapped)
+        let i_wrapped = if i <= ci then ci - i else len + (ci - i) in
+        Some i_wrapped
+    
+    let get_previous r i =
+      Option.bind (wrap_reverse_i r i) (fun i -> r.ring.(i))
     
     let get_latest r = get_previous r 0
 
@@ -116,15 +118,18 @@ module Make
       in
       { r with ring = Array.map f r.ring }
 
-    (*> goto fix; the order for fold-left matters - which should be based on
-      ring-index; i.e. oldest first
-    *)
     let fold_left f acc r =
       let f acc = function
         | None -> acc
         | Some v -> f acc v
       in
-      Array.fold_left f acc r.ring
+      let len = Array.length r.ring in
+      let acc = ref acc in
+      for i = pred len downto 0 do
+        let i = wrap_reverse_i r i |> Option.get in
+        acc := f !acc r.ring.(i);
+      done;
+      !acc
 
   end
 
@@ -142,15 +147,17 @@ module Make
 
     (*> Note: a stream is used to avoid blocking ringbuffer-handler*)
     type 'a stream = 'a Lwt_stream.t * 'a Lwt_stream.bounded_push
-    
+
+    (*> goto maybe; [sink, source, feeder] could be a single abstraction*)
     type t = {
       sink : ring_field stream;
       source : Cstruct.t Mirage_flow.or_eof stream;
+      feeder : unit Lwt.t;
       port : int;
       pier : Ipaddr.t;
       pier_port : int;
       conn_id : string;
-      feeder : unit Lwt.t;
+      (*<goto this could maybe be avoided, as Conn_map has it as key*)
     }
 
     let udp_stack = S.udp Sv.stack
@@ -324,8 +331,8 @@ module Make
       Lwt_stream.next (fst flow.source) >|= fun res ->
       Ok res
 
-    (*> Note: it's important that all cstructs are written at once for ordering*)
     let writev flow datas =
+      (*> Note: it's important that all cstructs are written at once for ordering*)
       let data = Cstruct.concat datas in
       let src_port = flow.port in
       let dst, dst_port = flow.pier, flow.pier_port in
