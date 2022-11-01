@@ -345,6 +345,7 @@ module Make
         * listen-case: flow is only given to callback on recv first packet
         * connect-case: flow already has dst + dst_port
       *)
+      (*> goto maybe; this ttl didn't fix anything, so maybe set to default*)
       S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
 
