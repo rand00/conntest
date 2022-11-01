@@ -77,6 +77,8 @@ module Make
           connection_id;
         }
       )
+      |> Option.to_result
+        ~none:(`Msg "header_of_ctx: Failure: ctx.conn_id_client is None")
 
     let start ~name ~port ~timeout =
       let module O = O.Listen in
@@ -116,6 +118,7 @@ module Make
       and handle_packet ~ctx ~packet ~more_data =
         let pier = pier_of_ctx ctx in
         let header = packet.Packet.T.header in
+        let ctx = { ctx with conn_id_client = Some header.connection_id } in
         let* protocol = packet.data |> Protocol_msg.of_cstruct |> Lwt.return in
         match protocol with
         | `Hello hello ->
@@ -164,7 +167,7 @@ module Make
           let* packet, more_data = read_packet ~ctx ?more_data () in
           handle_packet ~ctx ~packet ~more_data
       and respond ~ctx ~protocol =
-        let header = header_of_ctx ctx |> Option.get in 
+        let* header = header_of_ctx ctx |> Lwt.return in 
         let pier = pier_of_ctx ctx in
         let data = protocol |> Protocol_msg.to_cstruct in
         let response = Packet.to_cstructs ~header ~data in
@@ -175,7 +178,7 @@ module Make
         let ctx = { ctx with packet_index = succ ctx.packet_index } in
         Lwt_result.return ctx
       and respond_with_n_copies ~ctx ~n ~data =
-        let header = header_of_ctx ctx |> Option.get in 
+        let* header = header_of_ctx ctx |> Lwt.return in 
         let pier = pier_of_ctx ctx in
         if n <= 0 then Lwt_result.return ctx else 
           let { flow; dst; dst_port; conn_id } = ctx in
