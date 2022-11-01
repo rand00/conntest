@@ -186,7 +186,7 @@ module Make
       in
       let rec aux ~last_feeded_packet_index ring =
         Lwt_mvar.take sink >>= fun ring_field ->
-        (* Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd"); *)
+        Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
         let expected_packet_index =
           match Ring.get_latest ring with
           | None -> 0
@@ -227,9 +227,9 @@ module Make
           in
           if packet_index_is_newer && not seen_empty_data then
             let data = `Data (Option.get ring_field'.data) in
-            (* Logs.err (fun m -> m "DEBUG: feed_source: pushing packet from RING (bounded-stream elements = %d)"
-             *     ((snd source)#count)
-             * ); *)
+            Logs.err (fun m -> m "DEBUG: feed_source: pushing packet from RING (bounded-stream elements = %d)"
+                ((snd source)#count)
+            );
             (snd source)#push data >|= fun () ->
             let last_feeded_packet_index = ring_field'.packet_index in
             last_feeded_packet_index, seen_empty_data
