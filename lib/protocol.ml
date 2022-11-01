@@ -55,9 +55,11 @@ module Make
 
     type context = {
       flow : Flow.t;
+      packet_index : int;
       dst : Ipaddr.t;
       dst_port : int;
       conn_id : string;
+      conn_id_client : string option;
       progress : unit -> unit Lwt.t;
     }
 
@@ -67,6 +69,14 @@ module Make
       port = ctx.dst_port;
       conn_id = ctx.conn_id;
     }
+
+    let header_of_ctx ctx =
+      ctx.conn_id_client |> Option.map (fun connection_id ->
+        Packet.T.{
+          index = ctx.packet_index;
+          connection_id;
+        }
+      )
 
     let start ~name ~port ~timeout =
       let module O = O.Listen in
@@ -112,7 +122,7 @@ module Make
           let protocol = Some protocol in
           O.received_packet ~pier ~header ~protocol;
           let protocol = `Hello Protocol_msg.T.{ name } in
-          let* () = respond ~ctx ~header ~protocol in
+          let* ctx = respond ~ctx ~protocol in
           let* packet, more_data = read_packet ~ctx ?more_data () in
           handle_packet ~ctx ~packet ~more_data
         | `Bandwidth bwm ->
@@ -136,7 +146,7 @@ module Make
                 String.make bwm.packet_size '%'
                 |> Cstruct.of_string
               in
-              let* () = respond_with_n_copies ~ctx ~n ~header ~data in
+              let* ctx = respond_with_n_copies ~ctx ~n ~data in
               let* packet, more_data = read_packet ~ctx ?more_data () in
               handle_packet ~ctx ~packet ~more_data
           end
@@ -145,7 +155,7 @@ module Make
           O.received_packet ~pier ~header ~protocol;
           let header = packet.header in
           let protocol = `Latency `Pong in
-          let* () = respond ~ctx ~header ~protocol in
+          let* ctx = respond ~ctx ~protocol in
           let* packet, more_data = read_packet ~ctx ?more_data () in
           handle_packet ~ctx ~packet ~more_data
         | `Latency `Pong -> 
@@ -153,7 +163,8 @@ module Make
           O.received_packet ~pier ~header ~protocol;
           let* packet, more_data = read_packet ~ctx ?more_data () in
           handle_packet ~ctx ~packet ~more_data
-      and respond ~ctx ~header ~protocol =
+      and respond ~ctx ~protocol =
+        let header = header_of_ctx ctx |> Option.get in 
         let pier = pier_of_ctx ctx in
         let data = protocol |> Protocol_msg.to_cstruct in
         let response = Packet.to_cstructs ~header ~data in
@@ -161,28 +172,41 @@ module Make
         ctx.progress () >>= fun () ->
         let protocol = Some protocol in
         O.sent_packet ~pier ~header ~protocol;
-        Lwt_result.return ()
-      and respond_with_n_copies ~ctx ~n ~header ~data =
+        let ctx = { ctx with packet_index = succ ctx.packet_index } in
+        Lwt_result.return ctx
+      and respond_with_n_copies ~ctx ~n ~data =
+        let header = header_of_ctx ctx |> Option.get in 
         let pier = pier_of_ctx ctx in
-        if n <= 0 then Lwt_result.return () else 
+        if n <= 0 then Lwt_result.return ctx else 
           let { flow; dst; dst_port; conn_id } = ctx in
           let response = Packet.to_cstructs ~header ~data in
           let* () = Flow.writev flow response in
           ctx.progress () >>= fun () ->
           let protocol = None in
           O.sent_packet ~pier ~header ~protocol;
+          let ctx = { ctx with packet_index = succ ctx.packet_index } in
           let n = pred n in
-          respond_with_n_copies ~ctx ~n ~header ~data 
+          respond_with_n_copies ~ctx ~n ~data 
       in
       let callback flow =
         Mirage_runtime.at_exit (fun () -> Flow.close flow);
         let dst, dst_port = Flow.dst flow in
         let conn_id = Uuidm.(v `V4 |> to_string) in
+        let conn_id_client = None in
         let sleep_ns = Time.sleep_ns in
         let timeout_ns = ns_of_sec (float timeout) in
         let timeout_state = Timeout.make ~sleep_ns ~timeout_ns in
         let progress () = Timeout.progress timeout_state in
-        let ctx = { flow; dst; dst_port; conn_id; progress } in
+        let ctx = {
+          flow;
+          packet_index = 0;
+          dst;
+          dst_port;
+          conn_id;
+          conn_id_client;
+          progress;
+        }
+        in
         let pier = pier_of_ctx ctx in
         Lwt.catch
           (fun () ->

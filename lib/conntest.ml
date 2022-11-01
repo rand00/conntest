@@ -141,7 +141,7 @@ module Make
     type ring_field = {
       data : Cstruct.t option; (*None => packet is late*)
       packet_index : int;
-      (*< goto this field could be avoided, as packet bears this info,
+      (*< goto maybe this field could be avoided, as packet bears this info,
         .. and it's calculated from prev packet otherwise*)
     }
 
@@ -157,7 +157,7 @@ module Make
       pier : Ipaddr.t;
       pier_port : int;
       conn_id : string;
-      (*<goto this could maybe be avoided, as Conn_map has it as key*)
+      (*<goto maybe; this could be avoided, as Conn_map has it as key*)
     }
 
     let udp_stack = S.udp Sv.stack
@@ -167,12 +167,6 @@ module Make
     (*> Warning: but don't know why you would run two instances of protocol*)
     let conn_map = ref (Conn_map.empty)
 
-    (*> goto fix packet-index's in Protocol as they are expected to behave
-        differently here and now:
-        * each recvd packet should have an index always incrementing
-          * tracked by sender
-          * meaning: how many packets has been sent by sender 
-    *)
     let feed_source ~sink ~source =
       let push_until_packet ~ring ~ring_field ~packet_index_diff =
         let final_packet_index = ring_field.packet_index in
