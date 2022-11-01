@@ -326,8 +326,7 @@ module Make
           let protocol = `Hello Protocol_msg.T.{ name } in
           let* ctx = write_packet ~ctx ~header ~protocol in
           let* _more_data = read_packet ~ctx () in
-          (* let conn_state = `Latency in *)
-          let conn_state = `Init in
+          let conn_state = `Latency in
           write_more ~ctx ~conn_state
         | `Latency ->
           let protocol = `Latency `Ping in
