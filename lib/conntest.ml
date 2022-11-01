@@ -150,6 +150,7 @@ module Make
 
     (*> goto maybe; [sink, source, feeder] could be a single abstraction*)
     type t = {
+      is_client : bool;
       sink : ring_field stream;
       source : Cstruct.t Mirage_flow.or_eof stream;
       feeder : unit Lwt.t;
@@ -249,6 +250,7 @@ module Make
             let source = Lwt_stream.create_bounded (ring_size * 2) in
             let feeder = feed_source ~sink ~source in
             let flow = {
+              is_client = false;
               sink;
               source;
               port;
@@ -307,6 +309,7 @@ module Make
       let port = Udp_port.allocate () in
       let feeder = feed_source ~sink ~source in
       let flow = {
+        is_client = true;
         sink;
         source;
         port;
@@ -340,11 +343,11 @@ module Make
     let dst flow = flow.pier, flow.pier_port
 
     let close flow =
-      unlisten ~port:flow.port;
+      if flow.is_client then unlisten ~port:flow.port; 
       Lwt.cancel flow.feeder;
       let conn_map' = Conn_map.remove flow.conn_id !conn_map in
       conn_map := conn_map';
-      Udp_port.free flow.port;
+      if flow.is_client then Udp_port.free flow.port;
       Lwt.return_unit
     
   end
