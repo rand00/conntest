@@ -137,6 +137,7 @@ module Make
     (* include S.UDP *)
 
     let ring_size = 5
+    let bounded_stream_size = ring_size * 2
 
     type ring_field = {
       data : Cstruct.t option; (*None => packet is late*)
@@ -184,52 +185,49 @@ module Make
         aux ~ring packet_index_diff          
       in
       let rec aux ~last_feeded_packet_index ring =
-        Lwt_stream.get (fst sink) >>= function
-        | None -> aux ~last_feeded_packet_index ring
-        (*< goto guess this is okay (polling)?*)
-        | Some ring_field ->
-          let expected_packet_index =
-            match Ring.get_latest ring with
-            | None -> 0
-            | Some v -> succ v.packet_index
+        Lwt_stream.next (fst sink) >>= fun ring_field ->
+        let expected_packet_index =
+          match Ring.get_latest ring with
+          | None -> 0
+          | Some v -> succ v.packet_index
+        in
+        let packet_index_diff =
+          ring_field.packet_index - expected_packet_index
+        in
+        let ring =
+          if packet_index_diff < 0 then
+            (*> Note: this is just easier than calculating index for 'set'
+               .. and ring shouldn't be long
+            *)
+            ring |> Ring.map (fun ring_field' ->
+              if ring_field'.packet_index = ring_field.packet_index then
+                ring_field
+              else
+                ring_field'
+            )
+            (*< goto here out-of-order also need to be tracked*)
+          else (*if packet_index_diff >= 0*)
+            push_until_packet ~ring ~ring_field ~packet_index_diff
+            (*< goto register dropped packet as 'lost' if not seen
+              * @idea; return the dropped packet from Ring.insert
+            *)
+        in
+        ring |> Ring.fold_left (fun acc ring_field' ->
+          acc >>= fun (last_feeded_packet_index, seen_empty_data) ->
+          let seen_empty_data = seen_empty_data || ring_field'.data = None in
+          let packet_index_is_newer =
+            ring_field'.packet_index > last_feeded_packet_index
           in
-          let packet_index_diff =
-            ring_field.packet_index - expected_packet_index
-          in
-          let ring =
-            if packet_index_diff < 0 then
-              (*> Note: this is just easier than calculating index for 'set'
-                 .. and ring shouldn't be long
-              *)
-              ring |> Ring.map (fun ring_field' ->
-                if ring_field'.packet_index = ring_field.packet_index then
-                  ring_field
-                else
-                  ring_field'
-              )
-              (*< goto here out-of-order also need to be tracked*)
-            else (*if packet_index_diff >= 0*)
-              push_until_packet ~ring ~ring_field ~packet_index_diff
-              (*< goto register dropped packet as 'lost' if not seen
-                * @idea; return the dropped packet from Ring.insert
-              *)
-          in
-          ring |> Ring.fold_left (fun acc ring_field' ->
-            acc >>= fun (last_feeded_packet_index, seen_empty_data) ->
-            let seen_empty_data = seen_empty_data || ring_field'.data = None in
-            let packet_index_is_newer =
-              ring_field'.packet_index > last_feeded_packet_index
-            in
-            if packet_index_is_newer && not seen_empty_data then
-              let data = `Data (Option.get ring_field'.data) in
-              (snd source)#push data >|= fun () ->
-              let last_feeded_packet_index = ring_field'.packet_index in
-              last_feeded_packet_index, seen_empty_data
-            else
-              Lwt.return (last_feeded_packet_index, seen_empty_data)
-          ) (Lwt.return (last_feeded_packet_index, false))
-          >>= fun (last_feeded_packet_index, _) ->
-          aux ~last_feeded_packet_index ring
+          if packet_index_is_newer && not seen_empty_data then
+            let data = `Data (Option.get ring_field'.data) in
+            (snd source)#push data >|= fun () ->
+            let last_feeded_packet_index = ring_field'.packet_index in
+            last_feeded_packet_index, seen_empty_data
+          else
+            Lwt.return (last_feeded_packet_index, seen_empty_data)
+        ) (Lwt.return (last_feeded_packet_index, false))
+        >>= fun (last_feeded_packet_index, _) ->
+        aux ~last_feeded_packet_index ring
       in
       aux ~last_feeded_packet_index:(-1) @@ Ring.make ring_size
     
@@ -245,9 +243,9 @@ module Make
               let packet_index = packet.Packet.T.header.index in
               { data; packet_index }
             in
-            let sink = Lwt_stream.create_bounded (ring_size * 2) in
+            let sink = Lwt_stream.create_bounded bounded_stream_size in
             (snd sink)#push ring_field >>= fun () -> 
-            let source = Lwt_stream.create_bounded (ring_size * 2) in
+            let source = Lwt_stream.create_bounded bounded_stream_size in
             let feeder = feed_source ~sink ~source in
             let flow = {
               is_client = false;
@@ -304,8 +302,8 @@ module Make
     end
 
     let create_connection ~id (pier, pier_port) =
-      let sink = Lwt_stream.create_bounded (ring_size * 2) in
-      let source = Lwt_stream.create_bounded (ring_size * 2) in
+      let sink = Lwt_stream.create_bounded bounded_stream_size in
+      let source = Lwt_stream.create_bounded bounded_stream_size in
       let port = Udp_port.allocate () in
       let feeder = feed_source ~sink ~source in
       let flow = {
