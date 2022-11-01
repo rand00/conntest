@@ -152,7 +152,7 @@ module Make
     (*> goto maybe; [sink, source, feeder] could be a single abstraction*)
     type t = {
       is_client : bool;
-      sink : ring_field stream;
+      sink : ring_field Lwt_mvar.t;
       source : Cstruct.t Mirage_flow.or_eof stream;
       feeder : unit Lwt.t;
       port : int;
@@ -185,7 +185,8 @@ module Make
         aux ~ring packet_index_diff          
       in
       let rec aux ~last_feeded_packet_index ring =
-        Lwt_stream.next (fst sink) >>= fun ring_field ->
+        Lwt_mvar.take sink >>= fun ring_field ->
+        Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
         let expected_packet_index =
           match Ring.get_latest ring with
           | None -> 0
@@ -195,10 +196,11 @@ module Make
           ring_field.packet_index - expected_packet_index
         in
         let ring =
-          if packet_index_diff < 0 then
+          if packet_index_diff < 0 then (
             (*> Note: this is just easier than calculating index for 'set'
                .. and ring shouldn't be long
             *)
+            Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff < 0");
             ring |> Ring.map (fun ring_field' ->
               if ring_field'.packet_index = ring_field.packet_index then
                 ring_field
@@ -206,11 +208,13 @@ module Make
                 ring_field'
             )
             (*< goto here out-of-order also need to be tracked*)
-          else (*if packet_index_diff >= 0*)
+          ) else ((*if packet_index_diff >= 0*)
+            Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff >= 0");
             push_until_packet ~ring ~ring_field ~packet_index_diff
             (*< goto register dropped packet as 'lost' if not seen
               * @idea; return the dropped packet from Ring.insert
             *)
+          )
         in
         ring |> Ring.fold_left (fun acc ring_field' ->
           acc >>= fun (last_feeded_packet_index, seen_empty_data) ->
@@ -220,6 +224,9 @@ module Make
           in
           if packet_index_is_newer && not seen_empty_data then
             let data = `Data (Option.get ring_field'.data) in
+            Logs.err (fun m -> m "DEBUG: feed_source: pushing packet from RING (bounded-stream elements = %d)"
+                ((snd source)#count)
+            );
             (snd source)#push data >|= fun () ->
             let last_feeded_packet_index = ring_field'.packet_index in
             last_feeded_packet_index, seen_empty_data
@@ -243,8 +250,7 @@ module Make
               let packet_index = packet.Packet.T.header.index in
               { data; packet_index }
             in
-            let sink = Lwt_stream.create_bounded bounded_stream_size in
-            (snd sink)#push ring_field >>= fun () -> 
+            let sink = Lwt_mvar.create ring_field in
             let source = Lwt_stream.create_bounded bounded_stream_size in
             let feeder = feed_source ~sink ~source in
             let flow = {
@@ -266,7 +272,7 @@ module Make
               let packet_index = packet.Packet.T.header.index in
               { data; packet_index }
             in
-            (snd flow.sink)#push ring_field
+            Lwt_mvar.put flow.sink ring_field
           end
         (*> goto change interface of 'listen' to return Result.t instead*)
         | Ok (`Unfinished _) ->
@@ -302,8 +308,10 @@ module Make
     end
 
     let create_connection ~id (pier, pier_port) =
-      let sink = Lwt_stream.create_bounded bounded_stream_size in
+      let sink = Lwt_mvar.create_empty () in
       let source = Lwt_stream.create_bounded bounded_stream_size in
+      (*> goto handle that user shouldn't create a server-listening port that
+        can be allocated here as well*)
       let port = Udp_port.allocate () in
       let feeder = feed_source ~sink ~source in
       let flow = {
@@ -321,7 +329,6 @@ module Make
       listen ~port (fun _flow -> Lwt.return_unit);
       Lwt_result.return flow
 
-    (*> goto does 'next' fail if there havn't been put anything into stream?*)
     let read flow =
       Lwt_stream.next (fst flow.source) >|= fun res ->
       Ok res
