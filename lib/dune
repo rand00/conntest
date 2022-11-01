@@ -2,7 +2,7 @@
  (name conntest)
  (public_name conntest)
 ;; (modules conntest output packet)
- (flags :standard -w -6-27-32-33-39-20-26)
+ (flags :standard -w -6-9-27-32-33-39-20-26)
  (libraries
   mirage-time
   mirage-clock
