@@ -345,7 +345,7 @@ module Make
         * listen-case: flow is only given to callback on recv first packet
         * connect-case: flow already has dst + dst_port
       *)
-      S.UDP.write ~src_port ~dst ~dst_port udp_stack data
+      S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
 
     let dst flow = flow.pier, flow.pier_port
