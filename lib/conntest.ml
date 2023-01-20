@@ -184,13 +184,18 @@ module Make
       |> error_to_msg S.UDP.pp_error
     
     let feed_source ~writev_ctx ~sink ~source =
+      let is_forgotten_lost forgotten_opt =
+        forgotten_opt |> Option.fold ~none:0 ~some:(fun forgotten ->
+          if Option.is_none forgotten.data then 1 else 0
+        )
+      in
       let push_until_packet ~ring ~ring_field ~packet_index_diff =
         let final_packet_index = ring_field.packet_index in
         let rec aux ~lost_packets ~ring = function
           | 0 ->
             let ring, forgotten = ring |> Ring.push ring_field in
             let lost_packets =
-              lost_packets + (if Option.is_none forgotten then 1 else 0)
+              lost_packets + (is_forgotten_lost forgotten)
             in
             ring, lost_packets
           | packet_index_diff ->
@@ -200,7 +205,7 @@ module Make
             in
             let ring, forgotten = ring |> Ring.push ring_field_not_received in
             let lost_packets =
-              lost_packets + (if Option.is_none forgotten then 1 else 0)
+              lost_packets + (is_forgotten_lost forgotten)
             in
             aux ~lost_packets ~ring @@ pred packet_index_diff
         in
