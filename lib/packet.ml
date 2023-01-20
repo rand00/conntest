@@ -9,9 +9,17 @@ let result_of_opt msg = function
 
 module Header = struct
 
+  type meta = [
+    | `Normal
+    | `Ack
+    | `Resend_ack
+  ]
+  [@@deriving yojson]
+  
   type t = {
     index : int;
     connection_id : string;
+    meta : meta;
   }
   [@@deriving yojson]
 
@@ -25,6 +33,7 @@ module T = struct
   type header = Header.t = {
     index : int;
     connection_id : string;
+    meta : Header.meta;
   }
 
   type t = {

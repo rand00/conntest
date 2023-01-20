@@ -75,6 +75,7 @@ module Make
         Packet.T.{
           index = ctx.packet_index;
           connection_id;
+          meta = `Normal;
         }
       )
       |> Option.to_result
@@ -319,7 +320,8 @@ module Make
       and write_more ~ctx ~conn_state =
         let header = Packet.T.{
           index = ctx.packet_index;
-          connection_id = ctx.conn_id
+          connection_id = ctx.conn_id;
+          meta = `Normal;
         } in
         match conn_state with
         | `Init ->
@@ -335,7 +337,8 @@ module Make
           let* _more_data = read_packet ~ctx () in
           let header = Packet.T.{
             index = ctx.packet_index;
-            connection_id = ctx.conn_id
+            connection_id = ctx.conn_id;
+            meta = `Normal;
           } in
           let protocol = `Latency `Pong in
           let* ctx = write_packet ~ctx ~header ~protocol in
@@ -396,6 +399,7 @@ module Make
             let header = Packet.T.{
               index = packet_index;
               connection_id;
+              meta = `Normal;
             }
             in
             let data = Packet.to_cstructs ~header ~data in

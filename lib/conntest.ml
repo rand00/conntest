@@ -169,7 +169,20 @@ module Make
     (*> Warning: but don't know why you would run two instances of protocol*)
     let conn_map = ref (Conn_map.empty)
 
-    let feed_source ~sink ~source =
+    type writev_ctx = {
+      dst : Ipaddr.t;
+      dst_port : int;
+      src_port : int;
+    }
+    
+    let writev' ~ctx datas =
+      let { src_port; dst; dst_port } = ctx in
+      (*> Note: it's important that all cstructs are written at once for ordering*)
+      let data = Cstruct.concat datas in
+      S.UDP.write ~src_port ~dst ~dst_port udp_stack data
+      |> error_to_msg S.UDP.pp_error
+    
+    let feed_source ~writev_ctx ~sink ~source =
       let push_until_packet ~ring ~ring_field ~packet_index_diff =
         let final_packet_index = ring_field.packet_index in
         let rec aux ~ring = function
@@ -182,7 +195,7 @@ module Make
             let ring = ring |> Ring.push ring_field_not_received in
             aux ~ring @@ pred packet_index_diff
         in
-        aux ~ring packet_index_diff          
+        aux ~ring packet_index_diff
       in
       let rec aux ~last_feeded_packet_index ring =
         Lwt_mvar.take sink >>= fun ring_field ->
@@ -214,8 +227,10 @@ module Make
                   packet_index_diff
               );
             push_until_packet ~ring ~ring_field ~packet_index_diff
-            (*< goto register dropped packet as 'lost' if not seen
-              * @idea; return the dropped packet from Ring.insert
+            (*< goto either:
+              * register dropped packet as 'lost' if not seen
+                * @idea; return the dropped packet from Ring.insert
+              * or, request lost packet resent
             *)
           )
         in
@@ -243,6 +258,11 @@ module Make
     
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
+        (*> gomaybe; as we do this, and let upper layer protocol reparse
+          .. then this parsing could be made to always happen in this layer,
+             .. and data could get sent as Packet.t to upper layer
+                .. though would bring more complexity to this layer..
+        *)
         match Packet.Tcp.init ~ignore_data:true data with
         | Ok (`Done (packet, _rest)) ->
           let conn_id = packet.Packet.T.header.connection_id in
@@ -255,7 +275,8 @@ module Make
             in
             let sink = Lwt_mvar.create ring_field in
             let source = Lwt_stream.create_bounded bounded_stream_size in
-            let feeder = feed_source ~sink ~source in
+            let writev_ctx = { dst = src; dst_port = src_port; src_port = port } in
+            let feeder = feed_source ~writev_ctx ~sink ~source in
             let flow = {
               is_client = false;
               sink;
@@ -277,7 +298,6 @@ module Make
             in
             Lwt_mvar.put flow.sink ring_field
           end
-        (*> goto change interface of 'listen' to return Result.t instead*)
         | Ok (`Unfinished _) ->
           failwith "Udp_flow: `Unfinished is unsupported for UDP"
         | Error (`Msg err) ->
@@ -316,7 +336,8 @@ module Make
       (*> goto handle that user shouldn't create a server-listening port that
         can be allocated here as well*)
       let port = Udp_port.allocate () in
-      let feeder = feed_source ~sink ~source in
+      let writev_ctx = { dst = pier; dst_port = pier_port; src_port = port } in
+      let feeder = feed_source ~writev_ctx ~sink ~source in
       let flow = {
         is_client = true;
         sink;
