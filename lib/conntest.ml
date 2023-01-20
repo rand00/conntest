@@ -145,6 +145,7 @@ module Make
       packet_index : int;
       (*< goto maybe this field could be avoided, as packet bears this info,
         .. and it's calculated from prev packet otherwise*)
+      meta : Packet.Header.meta;
     }
 
     (*> Note: a stream is used to avoid blocking ringbuffer-handler*)
@@ -201,7 +202,7 @@ module Make
           | packet_index_diff ->
             let ring_field_not_received =
               let packet_index = final_packet_index - packet_index_diff in
-              { packet_index; data = None }
+              { packet_index; data = None; meta = `Normal }
             in
             let ring, forgotten = ring |> Ring.push ring_field_not_received in
             let lost_packets =
@@ -211,8 +212,22 @@ module Make
         in
         aux ~lost_packets:0 ~ring packet_index_diff
       in
-      let rec aux ~last_feeded_packet_index ~delayed_packets ~lost_packets ring =
+      let rec aux
+          ~received_packets
+          ~last_feeded_packet_index
+          ~delayed_packets
+          ~lost_packets
+          ring
+        =
         Lwt_mvar.take sink >>= fun ring_field ->
+        let received_packets = match ring_field.meta with
+          | `Normal -> succ received_packets
+          | _ -> received_packets
+        in
+        (*goto if received_packets mod ack_pause = 0 then
+            * send_ack ~delayed_packets
+            * save potential error for next read
+        *)
         Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
         let expected_packet_index =
           match Ring.get_latest ring with
@@ -273,9 +288,15 @@ module Make
             Lwt.return (last_feeded_packet_index, seen_empty_data)
         ) (Lwt.return (last_feeded_packet_index, false))
         >>= fun (last_feeded_packet_index, _) ->
-        aux ~last_feeded_packet_index ~delayed_packets ~lost_packets ring
+        aux
+          ~received_packets
+          ~last_feeded_packet_index
+          ~delayed_packets
+          ~lost_packets
+          ring
       in
       aux
+        ~received_packets:0
         ~last_feeded_packet_index:(-1)
         ~delayed_packets:0
         ~lost_packets:0
@@ -296,7 +317,8 @@ module Make
             let ring_field =
               let data = Some data in
               let packet_index = packet.Packet.T.header.index in
-              { data; packet_index }
+              let meta = packet.Packet.T.header.meta in
+              { data; packet_index; meta }
             in
             let sink = Lwt_mvar.create ring_field in
             let source = Lwt_stream.create_bounded bounded_stream_size in
@@ -319,7 +341,8 @@ module Make
             let ring_field =
               let data = Some data in
               let packet_index = packet.Packet.T.header.index in
-              { data; packet_index }
+              let meta = packet.Packet.T.header.meta in
+              { data; packet_index; meta }
             in
             Lwt_mvar.put flow.sink ring_field
           end
