@@ -137,7 +137,20 @@ module Make
   module Udp_flow = struct
     (* include S.UDP *)
 
-    let ring_size = 5
+    (*> Note: must not be bigger than some internal OS buffer for UDP packets
+      being received
+      * goto research this semantics
+        * if there exist no such buffer, then an ack should be sent after each packet
+        * note that this layer of the protocol already consumes packets faster than upper
+          layer protocol
+    *)
+    let ack_receiver_bound = 4
+    let ack_sender_bound = ack_receiver_bound + 4
+    let ring_size = ack_sender_bound
+    (*> Note: just set this to some value where upper and lower protocol can run at slightly
+      different speeds, to allow some packets to take longer to consumer than others in upper
+      protocol
+    *)
     let bounded_stream_size = ring_size * 2
 
     type ring_field = {
@@ -224,10 +237,14 @@ module Make
           | `Normal -> succ received_packets
           | _ -> received_packets
         in
-        (*goto if received_packets mod ack_pause = 0 then
-            * send_ack ~delayed_packets
-            * save potential error for next read
-        *)
+        begin 
+          if received_packets mod ack_receiver_bound = 0 then (
+            (*> goto construct meta = `Ack packet*)
+            let data = failwith "todo" in
+            writev' ~ctx:writev_ctx data
+          ) else Lwt.return (Ok ())
+        end >>= fun _ack_result ->
+        (* goto save potential error for next read *)
         Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
         let expected_packet_index =
           match Ring.get_latest ring with
@@ -265,7 +282,7 @@ module Make
               push_until_packet ~ring ~ring_field ~packet_index_diff in
             let delayed_packets = delayed_packets + packet_index_diff in
             ring, delayed_packets, lost_packets + lost_packets_now
-            (*< goto request lost packet resent? idea is to do this via upper
+            (*< goto request lost packet to be re-sent? idea is to do this via upper
                 layer protocol if needed
             *)
           )
@@ -277,6 +294,7 @@ module Make
             ring_field'.packet_index > last_feeded_packet_index
           in
           if packet_index_is_newer && not seen_empty_data then
+            (*> goto this should contain potential errors from anywhere in this loop too*)
             let data = `Data (Option.get ring_field'.data) in
             Logs.err (fun m -> m "DEBUG: feed_source: pushing packet from RING (bounded-stream elements = %d)"
                 ((snd source)#count)
@@ -401,6 +419,7 @@ module Make
       listen ~port (fun _flow -> Lwt.return_unit);
       Lwt_result.return flow
 
+    (*> goto put errors into flow.source so they actually propagate to user*)
     let read flow =
       Lwt_stream.next (fst flow.source) >|= fun res ->
       Ok res
