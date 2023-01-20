@@ -95,8 +95,9 @@ module Make
 
     let push field r =
       let index = succ r.index mod Array.length r.ring in
+      let forgotten_field = r.ring.(index) in
       r.ring.(index) <- Some field;
-      { r with index }
+      { r with index }, forgotten_field
 
     let wrap_reverse_i r i =
       assert (i >= 0);
@@ -185,19 +186,27 @@ module Make
     let feed_source ~writev_ctx ~sink ~source =
       let push_until_packet ~ring ~ring_field ~packet_index_diff =
         let final_packet_index = ring_field.packet_index in
-        let rec aux ~ring = function
-          | 0 -> ring |> Ring.push ring_field
+        let rec aux ~lost_packets ~ring = function
+          | 0 ->
+            let ring, forgotten = ring |> Ring.push ring_field in
+            let lost_packets =
+              lost_packets + (if Option.is_none forgotten then 1 else 0)
+            in
+            ring, lost_packets
           | packet_index_diff ->
             let ring_field_not_received =
               let packet_index = final_packet_index - packet_index_diff in
               { packet_index; data = None }
             in
-            let ring = ring |> Ring.push ring_field_not_received in
-            aux ~ring @@ pred packet_index_diff
+            let ring, forgotten = ring |> Ring.push ring_field_not_received in
+            let lost_packets =
+              lost_packets + (if Option.is_none forgotten then 1 else 0)
+            in
+            aux ~lost_packets ~ring @@ pred packet_index_diff
         in
-        aux ~ring packet_index_diff
+        aux ~lost_packets:0 ~ring packet_index_diff
       in
-      let rec aux ~last_feeded_packet_index ring =
+      let rec aux ~last_feeded_packet_index ~delayed_packets ~lost_packets ring =
         Lwt_mvar.take sink >>= fun ring_field ->
         Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
         let expected_packet_index =
@@ -208,29 +217,36 @@ module Make
         let packet_index_diff =
           ring_field.packet_index - expected_packet_index
         in
-        let ring =
+        let ring, delayed_packets, lost_packets =
           if packet_index_diff < 0 then (
             (*> Note: this is just easier than calculating index for 'set'
                .. and ring shouldn't be long
             *)
             Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff < 0");
-            ring |> Ring.map (fun ring_field' ->
-              if ring_field'.packet_index = ring_field.packet_index then
+            let did_set = ref false in
+            let ring = ring |> Ring.map (fun ring_field' ->
+              if ring_field'.packet_index = ring_field.packet_index then (
+                did_set := true;
                 ring_field
-              else
+              ) else
                 ring_field'
             )
+            in
+            (*> Note: a packet can be delayed beyond the length of ring, hence 0 = lost*)
+            let delayed_packets = delayed_packets - (if !did_set then 1 else 0) in
+            ring, delayed_packets, lost_packets
             (*< goto here out-of-order also need to be tracked*)
           ) else ((*if packet_index_diff >= 0*)
             if packet_index_diff > 0 then 
               Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff > 0 (%d)"
                   packet_index_diff
               );
-            push_until_packet ~ring ~ring_field ~packet_index_diff
-            (*< goto either:
-              * register dropped packet as 'lost' if not seen
-                * @idea; return the dropped packet from Ring.insert
-              * or, request lost packet resent
+            let ring, lost_packets_now =
+              push_until_packet ~ring ~ring_field ~packet_index_diff in
+            let delayed_packets = delayed_packets + packet_index_diff in
+            ring, delayed_packets, lost_packets + lost_packets_now
+            (*< goto request lost packet resent? idea is to do this via upper
+                layer protocol if needed
             *)
           )
         in
@@ -252,9 +268,13 @@ module Make
             Lwt.return (last_feeded_packet_index, seen_empty_data)
         ) (Lwt.return (last_feeded_packet_index, false))
         >>= fun (last_feeded_packet_index, _) ->
-        aux ~last_feeded_packet_index ring
+        aux ~last_feeded_packet_index ~delayed_packets ~lost_packets ring
       in
-      aux ~last_feeded_packet_index:(-1) @@ Ring.make ring_size
+      aux
+        ~last_feeded_packet_index:(-1)
+        ~delayed_packets:0
+        ~lost_packets:0
+        (Ring.make ring_size)
     
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
