@@ -13,11 +13,19 @@ to simulate how your production-unikernels will be connected.
 ### Usecases
 * Testing that your networking setup works - e.g. when you use  bridges, 
   `TAP` devices, `NAT`, firewall rules etc.
+* As an alternative to `nmap` for testing what ports are open in a firewall - seen 
+  from a unikernels vantagepoint. 
+  * Note that `nmap` can't be attached directly to a `TAP` device, 
+    or run as a virtual machine,
+    so you need to wrap it in a VM to be run from the same positions as is possible for 
+    a unikernel.
 * Testing the connection-stats between different servers, MirageOS compilation-targets 
   and network-stacks.
   * This can e.g. be useful:
     * if you plan to rearrange where/how your unikernel instances are run
     * if you compare performance of different backends
+  * Note that e.g. `iperf`, like `nmap`, also need to be wrapped in a VM to test 
+    performance from the same positions as a unikernel.
 * Stress-testing connections by sending lots of data to/from several instances
   at the same time.
 * Playing around with distributed unikernel setups.
