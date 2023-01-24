@@ -12,7 +12,7 @@ to simulate how your production-unikernels will be connected.
 
 ### Usecases
 * Testing that your networking setup works - e.g. when you use  bridges, 
-  `TAP` devices, `NAT`, firewall rules etc.
+  `TAP` devices, `NAT`, firewall rules etc. which can become very complex. 
 * As an alternative to `nmap` for testing what ports are open in a firewall - seen 
   from a unikernels vantagepoint. 
   * Note that `nmap` can't be attached directly to a `TAP` device, 
