@@ -42,13 +42,17 @@ to simulate how your production-unikernels will be connected.
 
 ### To do
 * `UDP` support
-* Show stats:
+  * This is under development, where the `TCP`/`UDP` layer has been abstracted away, 
+    and `UDP` is being extended with package ordering + backpressure.
+* Show more stats:
   * lost packets (`UDP`)
   * packets out of order (`UDP`)
 * Show stats via alternative simple textual output. This is useful if you run your unikernel 
   via e.g. `albatross` which currently splits console output on newlines.
-* (maybe) Add structured data logging output, which can be used to graph the stats after running.
-  If this feature is useful to you, make an issue, and we'll discuss how this should work.
+* Add structured data logging output. Usecases:
+  * Plot the stats over time with another program after/while running `conntest`
+  * Explicitly log all failed connections too, for the `nmap`-alternative usecase. 
+    Currently the `notty` TUI only shows the active connections.
 
 ### Suggest features!
 If you find this unikernel useful, but it's e.g. missing some stats that you are interested in - then make an issue/PR (: 
