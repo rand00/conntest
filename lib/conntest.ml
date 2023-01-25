@@ -162,7 +162,8 @@ module Make
     }
 
     (*> Note: a stream is used to avoid blocking ringbuffer-handler*)
-    type 'a stream = 'a Lwt_stream.t * 'a Lwt_stream.bounded_push
+    type 'a bounded_stream = 'a Lwt_stream.t * 'a Lwt_stream.bounded_push
+    type 'a stream = 'a Lwt_stream.t * ('a option -> unit)
 
     type err = [ `Msg of string ]
     
@@ -170,13 +171,14 @@ module Make
     type t = {
       is_client : bool;
       sink : ring_field Lwt_mvar.t;
-      source : (Cstruct.t Mirage_flow.or_eof, err) result stream;
+      source : (Cstruct.t Mirage_flow.or_eof, err) result bounded_stream;
       feeder : unit Lwt.t;
       port : int;
       pier : Ipaddr.t;
       pier_port : int;
       conn_id : string;
       (*<goto maybe; this could be avoided, as Conn_map has it as key*)
+      backpressure : unit stream;
     }
 
     let udp_stack = S.udp Sv.stack
@@ -199,7 +201,7 @@ module Make
       S.UDP.write ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
     
-    let feed_source ~conn_id ~writev_ctx ~sink ~source =
+    let feed_source ~conn_id ~writev_ctx ~sink ~source ~backpressure =
       let is_forgotten_lost forgotten_opt =
         forgotten_opt |> Option.fold ~none:0 ~some:(fun forgotten ->
           if Option.is_none forgotten.data then 1 else 0
@@ -227,7 +229,18 @@ module Make
         in
         aux ~lost_packets:0 ~ring packet_index_diff
       in
-      let rec aux
+      let send_ack () =
+        let data =
+          let header = Packet.T.{
+            index = -1;
+            connection_id = conn_id;
+            meta = `Ack;
+          } in
+          Packet.to_cstructs ~header ~data:Cstruct.empty
+        in
+        writev' ~ctx:writev_ctx data
+      in
+      let rec loop_packets
           ~received_packets
           ~last_feeded_packet_index
           ~delayed_packets
@@ -235,96 +248,113 @@ module Make
           ring
         =
         Lwt_mvar.take sink >>= fun ring_field ->
-        let received_packets = match ring_field.meta with
-          | `Normal -> succ received_packets
-          | _ -> received_packets
-        in
-        begin 
-          if received_packets mod ack_receiver_bound = 0 then (
-            let data =
-              let header = Packet.T.{
-                index = -1;
-                connection_id = conn_id;
-                meta = `Ack;
-              } in
-              Packet.to_cstructs ~header ~data:Cstruct.empty
+        begin match ring_field.meta with
+          | `Ack ->
+            Lwt_stream.junk_old (fst backpressure) >>= fun _ ->
+            let rec fill_backpressure = function
+              | 0 -> Lwt.return_unit
+              | n -> 
+                (snd backpressure) @@ Some ();
+                fill_backpressure @@ pred n
             in
-            writev' ~ctx:writev_ctx data
-          ) else Lwt.return (Ok ())
-        end >>= fun send_ack_result ->
-        Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
-        let expected_packet_index =
-          match Ring.get_latest ring with
-          | None -> 0
-          | Some v -> succ v.packet_index
-        in
-        let packet_index_diff =
-          ring_field.packet_index - expected_packet_index
-        in
-        let ring, delayed_packets, lost_packets =
-          if packet_index_diff < 0 then (
-            (*> Note: this is just easier than calculating index for 'set'
-               .. and ring shouldn't be long
-            *)
-            Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff < 0");
-            let did_set = ref false in
-            let ring = ring |> Ring.map (fun ring_field' ->
-              if ring_field'.packet_index = ring_field.packet_index then (
-                did_set := true;
-                ring_field
-              ) else
-                ring_field'
-            )
+            fill_backpressure ack_sender_bound >>= fun () ->
+            loop_packets
+              ~received_packets
+              ~last_feeded_packet_index
+              ~delayed_packets
+              ~lost_packets
+              ring
+          | `Resend_ack -> failwith "todo"
+          (*goto howto;
+            * can't
+              * recurse, as next resend-ack happens after receiving next packet
+              * solely call send_ack, as error needs to propagate to 'read' user
+                * @idea;
+                  * send_ack here
+                  * pass result to recursive call
+                  * use passed result on next read
+          *)
+          | `Normal ->
+            let received_packets = succ received_packets in
+            begin (*Sending an `Ack *)
+              if received_packets mod ack_receiver_bound = 0 then
+                send_ack ()
+              else Lwt.return (Ok ())
+            end >>= fun send_ack_result ->
+            Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
+            let expected_packet_index =
+              match Ring.get_latest ring with
+              | None -> 0
+              | Some v -> succ v.packet_index
             in
-            (*> Note: a packet can be delayed beyond the length of ring, hence 0 = lost*)
-            let delayed_packets = delayed_packets - (if !did_set then 1 else 0) in
-            ring, delayed_packets, lost_packets
-            (*< goto here out-of-order also need to be tracked*)
-          ) else ((*if packet_index_diff >= 0*)
-            if packet_index_diff > 0 then 
-              Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff > 0 (%d)"
-                  packet_index_diff
-              );
-            let ring, lost_packets_now =
-              push_until_packet ~ring ~ring_field ~packet_index_diff in
-            let delayed_packets = delayed_packets + packet_index_diff in
-            ring, delayed_packets, lost_packets + lost_packets_now
-            (*< goto request lost packet to be re-sent? idea is to do this via upper
-                layer protocol if needed
-            *)
-          )
-        in
-        ring |> Ring.fold_left (fun acc ring_field' ->
-          acc >>= fun (last_feeded_packet_index, seen_empty_data) ->
-          let seen_empty_data = seen_empty_data || ring_field'.data = None in
-          let packet_index_is_newer =
-            ring_field'.packet_index > last_feeded_packet_index
-          in
-          if packet_index_is_newer && not seen_empty_data then
-            (*> Note: The user receives errors from 'ack'-writing on 'read'*)
-            let data =
-              send_ack_result |> Result.map (fun () -> 
-                `Data (Option.get ring_field'.data)
+            let packet_index_diff =
+              ring_field.packet_index - expected_packet_index
+            in
+            let ring, delayed_packets, lost_packets =
+              if packet_index_diff < 0 then (
+                (*> Note: this is just easier than calculating index for 'set'
+                   .. and ring shouldn't be long
+                *)
+                Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff < 0");
+                let did_set = ref false in
+                let ring = ring |> Ring.map (fun ring_field' ->
+                  if ring_field'.packet_index = ring_field.packet_index then (
+                    did_set := true;
+                    ring_field
+                  ) else
+                    ring_field'
+                )
+                in
+                (*> Note: a packet can be delayed beyond the length of ring, hence 0 = lost*)
+                let delayed_packets = delayed_packets - (if !did_set then 1 else 0) in
+                ring, delayed_packets, lost_packets
+                (*< goto here out-of-order also need to be tracked*)
+              ) else ((*if packet_index_diff >= 0*)
+                if packet_index_diff > 0 then 
+                  Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff > 0 (%d)"
+                      packet_index_diff
+                  );
+                let ring, lost_packets_now =
+                  push_until_packet ~ring ~ring_field ~packet_index_diff in
+                let delayed_packets = delayed_packets + packet_index_diff in
+                ring, delayed_packets, lost_packets + lost_packets_now
+                (*< goto request lost packet to be re-sent? idea is to do this via upper
+                    layer protocol if needed
+                *)
               )
             in
-            Logs.err (fun m -> m "DEBUG: feed_source: pushing packet from RING (bounded-stream elements = %d)"
-                ((snd source)#count)
-            );
-            (snd source)#push data >|= fun () ->
-            let last_feeded_packet_index = ring_field'.packet_index in
-            last_feeded_packet_index, seen_empty_data
-          else
-            Lwt.return (last_feeded_packet_index, seen_empty_data)
-        ) (Lwt.return (last_feeded_packet_index, false))
-        >>= fun (last_feeded_packet_index, _) ->
-        aux
-          ~received_packets
-          ~last_feeded_packet_index
-          ~delayed_packets
-          ~lost_packets
-          ring
+            ring |> Ring.fold_left (fun acc ring_field' ->
+              acc >>= fun (last_feeded_packet_index, seen_empty_data) ->
+              let seen_empty_data = seen_empty_data || ring_field'.data = None in
+              let packet_index_is_newer =
+                ring_field'.packet_index > last_feeded_packet_index
+              in
+              if packet_index_is_newer && not seen_empty_data then
+                (*> Note: The user receives errors from 'ack'-writing on 'read'*)
+                let data =
+                  send_ack_result |> Result.map (fun () -> 
+                    `Data (Option.get ring_field'.data)
+                  )
+                in
+                Logs.err (fun m -> m "DEBUG: feed_source: pushing packet from RING (bounded-stream elements = %d)"
+                    ((snd source)#count)
+                );
+                (snd source)#push data >|= fun () ->
+                let last_feeded_packet_index = ring_field'.packet_index in
+                last_feeded_packet_index, seen_empty_data
+              else
+                Lwt.return (last_feeded_packet_index, seen_empty_data)
+            ) (Lwt.return (last_feeded_packet_index, false))
+            >>= fun (last_feeded_packet_index, _) ->
+            loop_packets
+              ~received_packets
+              ~last_feeded_packet_index
+              ~delayed_packets
+              ~lost_packets
+              ring
+        end
       in
-      aux
+      loop_packets
         ~received_packets:0
         ~last_feeded_packet_index:(-1)
         ~delayed_packets:0
@@ -352,7 +382,15 @@ module Make
             let sink = Lwt_mvar.create ring_field in
             let source = Lwt_stream.create_bounded bounded_stream_size in
             let writev_ctx = { dst = src; dst_port = src_port; src_port = port } in
-            let feeder = feed_source ~conn_id ~writev_ctx ~sink ~source in
+            let backpressure = Lwt_stream.create () in
+            let feeder =
+              feed_source
+                ~conn_id
+                ~writev_ctx
+                ~sink
+                ~source
+                ~backpressure
+            in
             let flow = {
               is_client = false;
               sink;
@@ -362,6 +400,7 @@ module Make
               pier_port = src_port;
               conn_id;
               feeder;
+              backpressure;
             } in
             let conn_map' = Conn_map.add conn_id flow !conn_map in
             conn_map := conn_map';
@@ -415,7 +454,15 @@ module Make
         can be allocated here as well*)
       let port = Udp_port.allocate () in
       let writev_ctx = { dst = pier; dst_port = pier_port; src_port = port } in
-      let feeder = feed_source ~conn_id ~writev_ctx ~sink ~source in
+      let backpressure = Lwt_stream.create () in
+      let feeder =
+        feed_source
+          ~conn_id
+          ~writev_ctx
+          ~sink
+          ~source
+          ~backpressure
+      in
       let flow = {
         is_client = true;
         sink;
@@ -425,6 +472,7 @@ module Make
         pier_port;
         conn_id;
         feeder;
+        backpressure;
       } in
       let conn_map' = Conn_map.add id flow !conn_map in
       conn_map := conn_map';
@@ -437,17 +485,6 @@ module Make
       | Error (`Msg _ as msg) -> Error msg
     (*< Note: Opened polymorphic variant msg-type*)
 
-    (*> goto this should wait writing
-      * if flow.pier_ack (int) is >= ack_boundary_sender
-      * where
-        * pier_ack is a mutable field
-          * (don't want it to block)
-          * (there is no parallelism, so is okay)
-          * need to be updated when:
-            * an `Ack is received (=> set to 0)
-            * a new packet is sent (=> ++1)
-        * 
-    *)
     let writev flow datas =
       (*> Note: it's important that all cstructs are written at once for ordering*)
       let data = Cstruct.concat datas in
@@ -457,6 +494,11 @@ module Make
         * listen-case: flow is only given to callback on recv first packet
         * connect-case: flow already has dst + dst_port
       *)
+      let backpressure, _ = flow.backpressure in
+      (*> goto should also send `Expecting_ack within some timeout
+        .. and this expecting-ack thread is cancelled if next backpressure
+           becomes available*)
+      Lwt_stream.next backpressure >>= fun () -> 
       (*> goto maybe; this ttl didn't fix anything, so maybe set to default*)
       S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
