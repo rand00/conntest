@@ -164,11 +164,13 @@ module Make
     (*> Note: a stream is used to avoid blocking ringbuffer-handler*)
     type 'a stream = 'a Lwt_stream.t * 'a Lwt_stream.bounded_push
 
+    type err = [ `Msg of string ]
+    
     (*> goto maybe; [sink, source, feeder] could be a single abstraction*)
     type t = {
       is_client : bool;
       sink : ring_field Lwt_mvar.t;
-      source : Cstruct.t Mirage_flow.or_eof stream;
+      source : (Cstruct.t Mirage_flow.or_eof, err) result stream;
       feeder : unit Lwt.t;
       port : int;
       pier : Ipaddr.t;
@@ -197,7 +199,7 @@ module Make
       S.UDP.write ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
     
-    let feed_source ~writev_ctx ~sink ~source =
+    let feed_source ~conn_id ~writev_ctx ~sink ~source =
       let is_forgotten_lost forgotten_opt =
         forgotten_opt |> Option.fold ~none:0 ~some:(fun forgotten ->
           if Option.is_none forgotten.data then 1 else 0
@@ -239,12 +241,17 @@ module Make
         in
         begin 
           if received_packets mod ack_receiver_bound = 0 then (
-            (*> goto construct meta = `Ack packet*)
-            let data = failwith "todo" in
+            let data =
+              let header = Packet.T.{
+                index = -1;
+                connection_id = conn_id;
+                meta = `Ack;
+              } in
+              Packet.to_cstructs ~header ~data:Cstruct.empty
+            in
             writev' ~ctx:writev_ctx data
           ) else Lwt.return (Ok ())
-        end >>= fun _ack_result ->
-        (* goto save potential error for next read *)
+        end >>= fun send_ack_result ->
         Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
         let expected_packet_index =
           match Ring.get_latest ring with
@@ -294,8 +301,12 @@ module Make
             ring_field'.packet_index > last_feeded_packet_index
           in
           if packet_index_is_newer && not seen_empty_data then
-            (*> goto this should contain potential errors from anywhere in this loop too*)
-            let data = `Data (Option.get ring_field'.data) in
+            (*> Note: The user receives errors from 'ack'-writing on 'read'*)
+            let data =
+              send_ack_result |> Result.map (fun () -> 
+                `Data (Option.get ring_field'.data)
+              )
+            in
             Logs.err (fun m -> m "DEBUG: feed_source: pushing packet from RING (bounded-stream elements = %d)"
                 ((snd source)#count)
             );
@@ -341,7 +352,7 @@ module Make
             let sink = Lwt_mvar.create ring_field in
             let source = Lwt_stream.create_bounded bounded_stream_size in
             let writev_ctx = { dst = src; dst_port = src_port; src_port = port } in
-            let feeder = feed_source ~writev_ctx ~sink ~source in
+            let feeder = feed_source ~conn_id ~writev_ctx ~sink ~source in
             let flow = {
               is_client = false;
               sink;
@@ -397,13 +408,14 @@ module Make
     end
 
     let create_connection ~id (pier, pier_port) =
+      let conn_id = id in
       let sink = Lwt_mvar.create_empty () in
       let source = Lwt_stream.create_bounded bounded_stream_size in
       (*> goto handle that user shouldn't create a server-listening port that
         can be allocated here as well*)
       let port = Udp_port.allocate () in
       let writev_ctx = { dst = pier; dst_port = pier_port; src_port = port } in
-      let feeder = feed_source ~writev_ctx ~sink ~source in
+      let feeder = feed_source ~conn_id ~writev_ctx ~sink ~source in
       let flow = {
         is_client = true;
         sink;
@@ -411,7 +423,7 @@ module Make
         port;
         pier;
         pier_port;
-        conn_id = id;
+        conn_id;
         feeder;
       } in
       let conn_map' = Conn_map.add id flow !conn_map in
@@ -419,11 +431,23 @@ module Make
       listen ~port (fun _flow -> Lwt.return_unit);
       Lwt_result.return flow
 
-    (*> goto put errors into flow.source so they actually propagate to user*)
     let read flow =
-      Lwt_stream.next (fst flow.source) >|= fun res ->
-      Ok res
+      Lwt_stream.next (fst flow.source) >|= function
+      | Ok _ as ok -> ok
+      | Error (`Msg _ as msg) -> Error msg
+    (*< Note: Opened polymorphic variant msg-type*)
 
+    (*> goto this should wait writing
+      * if flow.pier_ack (int) is >= ack_boundary_sender
+      * where
+        * pier_ack is a mutable field
+          * (don't want it to block)
+          * (there is no parallelism, so is okay)
+          * need to be updated when:
+            * an `Ack is received (=> set to 0)
+            * a new packet is sent (=> ++1)
+        * 
+    *)
     let writev flow datas =
       (*> Note: it's important that all cstructs are written at once for ordering*)
       let data = Cstruct.concat datas in
