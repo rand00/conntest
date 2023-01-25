@@ -12,12 +12,19 @@ to simulate how your production-unikernels will be connected.
 
 ### Usecases
 * Testing that your networking setup works - e.g. when you use  bridges, 
-  `TAP` devices, `NAT`, firewall rules etc.
+  `TAP` devices, `NAT`, firewall rules etc. which can become complex. 
+* As an alternative to `nmap` for testing what ports are open in a firewall - seen 
+  from a unikernels vantagepoint. 
+  * Note that `nmap` can't be attached directly to a `TAP` device, 
+    so you need to wrap it in a VM to be run from the same positions as is possible for 
+    a unikernel.
 * Testing the connection-stats between different servers, MirageOS compilation-targets 
   and network-stacks.
   * This can e.g. be useful:
     * if you plan to rearrange where/how your unikernel instances are run
-    * if you compare performance of different backends
+    * if you compare performance of different MirageOS backends
+  * Note that e.g. `iperf`, like `nmap`, also need to be wrapped in a VM to test 
+    performance from the same positions as a unikernel.
 * Stress-testing connections by sending lots of data to/from several instances
   at the same time.
 * Playing around with distributed unikernel setups.
@@ -34,13 +41,17 @@ to simulate how your production-unikernels will be connected.
 
 ### To do
 * `UDP` support
-* Show stats:
+  * This is under development, where the `TCP`/`UDP` layer has been abstracted away, 
+    and `UDP` is being extended with package ordering + backpressure.
+* Show more stats:
   * lost packets (`UDP`)
   * packets out of order (`UDP`)
 * Show stats via alternative simple textual output. This is useful if you run your unikernel 
   via e.g. `albatross` which currently splits console output on newlines.
-* (maybe) Add structured data logging output, which can be used to graph the stats after running.
-  If this feature is useful to you, make an issue, and we'll discuss how this should work.
+* Add structured data logging output. Usecases:
+  * Plot the stats over time with another program after/while running `conntest`
+  * Explicitly log all failed connections too, for the `nmap`-alternative usecase. 
+    Currently the `notty` TUI only shows the active connections.
 
 ### Suggest features!
 If you find this unikernel useful, but it's e.g. missing some stats that you are interested in - then make an issue/PR (: 
