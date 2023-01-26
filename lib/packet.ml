@@ -112,7 +112,7 @@ module CsBuffer = struct
   
 end
 
-type unfinished_with_lengths = {
+type partial = {
   header_len : int;
   data_len : int;
   header : header option;
@@ -122,33 +122,33 @@ type unfinished_with_lengths = {
 
 type unfinished = [
   | `Init of string
-  | `With_lengths of unfinished_with_lengths
+  | `Partial of partial
 ]
 
 module Tcp = struct 
 
+  let try_parse_header ~len_buffer unfinished =
+    match unfinished.header with
+    | Some _ -> Ok unfinished
+    | None -> 
+      if len_buffer >= unfinished.header_len then (
+        let+ header =
+          CsBuffer.sub_string unfinished.buffer 0 unfinished.header_len
+          |> Header.of_string
+          |> Result.map_error (fun s -> `Msg s)
+        in
+        { unfinished with header = Some header }
+      ) else
+        Ok unfinished
+  
   let rec append ~data ?(ignore_data=false) (unfinished:unfinished) =
     match unfinished with
     | `Init str -> append_init_aux ~str ~data
-    | `With_lengths unfinished ->
+    | `Partial unfinished ->
       let buffer = CsBuffer.add unfinished.buffer data in
       let unfinished = { unfinished with buffer } in
       let len_buffer = CsBuffer.length unfinished.buffer in
-      let+ unfinished =
-        begin match unfinished.header with
-          | Some _ -> Ok unfinished
-          | None -> 
-            if len_buffer >= unfinished.header_len then (
-              let+ header =
-                CsBuffer.sub_string unfinished.buffer 0 unfinished.header_len
-                |> Header.of_string
-                |> Result.map_error (fun s -> `Msg s)
-              in
-              { unfinished with header = Some header }
-            ) else
-              Ok unfinished
-        end
-      in
+      let+ unfinished = try_parse_header ~len_buffer unfinished in
       let full_len = unfinished.header_len + unfinished.data_len in
       if len_buffer >= full_len then
         let header = Option.get unfinished.header in
@@ -170,8 +170,9 @@ module Tcp = struct
         in
         `Done ({ header; data }, more_data)
       else
-        `Unfinished (`With_lengths unfinished)
+        `Unfinished (`Partial unfinished)
 
+  (*> goto use Cstruct's all the way instead of string *)
   and append_init_aux ~str ~data =
     let str = str ^ Cstruct.to_string data in
     let newline_idxs = begin
@@ -210,7 +211,7 @@ module Tcp = struct
         String.(sub str (succ idx_2) (length str - (succ idx_2))) in
       let buffer = [Cstruct.of_string rest] in
       let unfinished = { header_len; data_len; header = None; buffer } in
-      append ~data:Cstruct.empty @@ `With_lengths unfinished
+      append ~data:Cstruct.empty @@ `Partial unfinished
 
   let init ?(ignore_data=false) data = append ~data ~ignore_data @@ `Init ""
     
