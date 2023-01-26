@@ -145,14 +145,14 @@ module Make
           layer protocol
     *)
     
-    (* let ack_receiver_bound = 4 *)
-    (* let ack_sender_bound = ack_receiver_bound + 4 *)
+    let ack_receiver_bound = 4
+    let ack_sender_bound = ack_receiver_bound + 4
 
-    (*> DEBUGGING values*)
+    (*> TESTING different values*)
     (* let ack_receiver_bound = 1 *)
     (* let ack_sender_bound = ack_receiver_bound *)
-    let ack_receiver_bound = 10
-    let ack_sender_bound = ack_receiver_bound + 4
+    (* let ack_receiver_bound = 10 *)
+    (* let ack_sender_bound = ack_receiver_bound + 4 *)
     
     let ring_size = ack_sender_bound
     (*> Note: just set this to some value where upper and lower protocol can run at slightly
@@ -421,7 +421,8 @@ module Make
             } in
             let conn_map' = Conn_map.add conn_id flow !conn_map in
             conn_map := conn_map';
-            user_callback flow
+            Lwt.async (fun () -> user_callback flow);
+            Lwt.return_unit
           | Some flow ->
             Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and found connection"
                 packet.Packet.T.header.index
