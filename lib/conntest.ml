@@ -144,8 +144,16 @@ module Make
         * note that this layer of the protocol already consumes packets faster than upper
           layer protocol
     *)
-    let ack_receiver_bound = 4
+    
+    (* let ack_receiver_bound = 4 *)
+    (* let ack_sender_bound = ack_receiver_bound + 4 *)
+
+    (*> DEBUGGING values*)
+    (* let ack_receiver_bound = 1 *)
+    (* let ack_sender_bound = ack_receiver_bound *)
+    let ack_receiver_bound = 10
     let ack_sender_bound = ack_receiver_bound + 4
+    
     let ring_size = ack_sender_bound
     (*> Note: just set this to some value where upper and lower protocol can run at slightly
       different speeds, to allow some packets to take longer to consumer than others in upper
@@ -253,7 +261,9 @@ module Make
           ~lost_packets
           ring
         =
+        Logs.err (fun m -> m "DEBUG: before Lwt_mvar.take sink");
         Lwt_mvar.take sink >>= fun ring_field ->
+        Logs.err (fun m -> m "DEBUG: after Lwt_mvar.take sink");
         begin match ring_field.meta with
           | `Ack ->
             Logs.err (fun m -> m "DEBUG: feed_source: received `Ack");
@@ -370,6 +380,7 @@ module Make
              .. and data could get sent as Packet.t to upper layer
                 .. though would bring more complexity to this layer..
         *)
+        Logs.err (fun m -> m "DEBUG: UDP CALLBACK!");
         match Packet.Tcp.init ~ignore_data:true data with
         | Ok (`Done (packet, _rest)) ->
           let conn_id = packet.Packet.T.header.connection_id in
@@ -524,11 +535,14 @@ module Make
     let dst flow = flow.pier, flow.pier_port
 
     let close flow =
-      if flow.is_client then unlisten ~port:flow.port; 
+      if flow.is_client then unlisten ~port:flow.port;
+      Logs.err (fun m -> m "DEBUG: close: Cancelling feeder");
       Lwt.cancel flow.feeder;
+      Logs.err (fun m -> m "DEBUG: close: Done cancelling feeder");
       let conn_map' = Conn_map.remove flow.conn_id !conn_map in
       conn_map := conn_map';
       if flow.is_client then Udp_port.free flow.port;
+      Logs.err (fun m -> m "DEBUG: close: returning unit");
       Lwt.return_unit
     
   end
