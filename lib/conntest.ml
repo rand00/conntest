@@ -261,9 +261,7 @@ module Make
           ~lost_packets
           ring
         =
-        Logs.err (fun m -> m "DEBUG: before Lwt_mvar.take sink");
         Lwt_mvar.take sink >>= fun ring_field ->
-        Logs.err (fun m -> m "DEBUG: after Lwt_mvar.take sink");
         begin match ring_field.meta with
           | `Ack ->
             Logs.err (fun m -> m "DEBUG: feed_source: received `Ack");
@@ -372,7 +370,61 @@ module Make
         ~delayed_packets:0
         ~lost_packets:0
         (Ring.make ring_size)
-    
+
+    let handle_packet ~src ~src_port ~port ~user_callback ~header ~data =
+      let conn_id = header.Packet.T.connection_id in
+      begin match Conn_map.find_opt conn_id !conn_map with
+        | None -> 
+          Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and creating connection"
+              header.Packet.T.index
+          );
+          let ring_field =
+            let data = Some data in
+            let packet_index = header.Packet.T.index in
+            let meta = header.Packet.T.meta in
+            { data; packet_index; meta }
+          in
+          let sink = Lwt_mvar.create ring_field in
+          let source = Lwt_stream.create_bounded bounded_stream_size in
+          let writev_ctx = { dst = src; dst_port = src_port; src_port = port } in
+          let backpressure = Lwt_stream.create () in
+          fill_backpressure backpressure ack_sender_bound >>= fun () ->
+          let feeder =
+            feed_source
+              ~conn_id
+              ~writev_ctx
+              ~sink
+              ~source
+              ~backpressure
+          in
+          let flow = {
+            is_client = false;
+            sink;
+            source;
+            port;
+            pier = src;
+            pier_port = src_port;
+            conn_id;
+            feeder;
+            backpressure;
+          } in
+          let conn_map' = Conn_map.add conn_id flow !conn_map in
+          conn_map := conn_map';
+          Lwt.async (fun () -> user_callback flow);
+          Lwt.return_unit
+        | Some flow ->
+          Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and found connection"
+              header.Packet.T.index
+          );
+          let ring_field =
+            let data = Some data in
+            let packet_index = header.Packet.T.index in
+            let meta = header.Packet.T.meta in
+            { data; packet_index; meta }
+          in
+          Lwt_mvar.put flow.sink ring_field
+      end
+
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
         (*> gomaybe; as we do this, and let upper layer protocol reparse
@@ -380,63 +432,28 @@ module Make
              .. and data could get sent as Packet.t to upper layer
                 .. though would bring more complexity to this layer..
         *)
-        Logs.err (fun m -> m "DEBUG: UDP CALLBACK!");
         match Packet.Tcp.init ~ignore_data:true data with
         | Ok (`Done (packet, _rest)) ->
-          let conn_id = packet.Packet.T.header.connection_id in
-          begin match Conn_map.find_opt conn_id !conn_map with
-          | None -> 
-            Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and creating connection"
-                packet.Packet.T.header.index
-            );
-            let ring_field =
-              let data = Some data in
-              let packet_index = packet.Packet.T.header.index in
-              let meta = packet.Packet.T.header.meta in
-              { data; packet_index; meta }
-            in
-            let sink = Lwt_mvar.create ring_field in
-            let source = Lwt_stream.create_bounded bounded_stream_size in
-            let writev_ctx = { dst = src; dst_port = src_port; src_port = port } in
-            let backpressure = Lwt_stream.create () in
-            fill_backpressure backpressure ack_sender_bound >>= fun () ->
-            let feeder =
-              feed_source
-                ~conn_id
-                ~writev_ctx
-                ~sink
-                ~source
-                ~backpressure
-            in
-            let flow = {
-              is_client = false;
-              sink;
-              source;
-              port;
-              pier = src;
-              pier_port = src_port;
-              conn_id;
-              feeder;
-              backpressure;
-            } in
-            let conn_map' = Conn_map.add conn_id flow !conn_map in
-            conn_map := conn_map';
-            Lwt.async (fun () -> user_callback flow);
-            Lwt.return_unit
-          | Some flow ->
-            Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and found connection"
-                packet.Packet.T.header.index
-            );
-            let ring_field =
-              let data = Some data in
-              let packet_index = packet.Packet.T.header.index in
-              let meta = packet.Packet.T.header.meta in
-              { data; packet_index; meta }
-            in
-            Lwt_mvar.put flow.sink ring_field
+          handle_packet
+            ~src ~src_port ~port
+            ~user_callback
+            ~header:packet.Packet.T.header
+            ~data
+        | Ok (`Unfinished (`Partial (unfinished:Packet.partial))) ->
+          begin match unfinished.header with
+            | None ->
+              failwith "Udp_flow: `Unfinished with no header is unsupported \
+                        for UDP"
+            | Some header -> 
+              Logs.err (fun m -> m "DEBUG: listen.callback: using unfinished packet header");
+              handle_packet
+                ~src ~src_port ~port
+                ~user_callback
+                ~header
+                ~data
           end
         | Ok (`Unfinished _) ->
-          failwith "Udp_flow: `Unfinished is unsupported for UDP"
+          failwith "Udp_flow: `Unfinished with no header is unsupported for UDP"
         | Error (`Msg err) ->
           failwith ("Udp_flow: Error: "^err) 
       in
@@ -525,25 +542,17 @@ module Make
         Logs.err (fun m -> m "DEBUG: writev: backpressure!");
       backpressure_t >>= fun () ->
       (*> goto maybe; this ttl didn't fix anything, so maybe set to default*)
-      Logs.err (fun m -> m "DEBUG: writev: writing!");
-      begin
-        S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
-        |> error_to_msg S.UDP.pp_error
-      end >|= fun r ->
-      Logs.err (fun m -> m "DEBUG: writev: wrote!");
-      r
+      S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
+      |> error_to_msg S.UDP.pp_error
 
     let dst flow = flow.pier, flow.pier_port
 
     let close flow =
       if flow.is_client then unlisten ~port:flow.port;
-      Logs.err (fun m -> m "DEBUG: close: Cancelling feeder");
       Lwt.cancel flow.feeder;
-      Logs.err (fun m -> m "DEBUG: close: Done cancelling feeder");
       let conn_map' = Conn_map.remove flow.conn_id !conn_map in
       conn_map := conn_map';
       if flow.is_client then Udp_port.free flow.port;
-      Logs.err (fun m -> m "DEBUG: close: returning unit");
       Lwt.return_unit
     
   end
