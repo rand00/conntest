@@ -200,7 +200,13 @@ module Make
       let data = Cstruct.concat datas in
       S.UDP.write ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
-    
+
+    let rec fill_backpressure backpressure = function
+      | 0 -> Lwt.return_unit
+      | n -> 
+        (snd backpressure) @@ Some ();
+        fill_backpressure backpressure @@ pred n
+
     let feed_source ~conn_id ~writev_ctx ~sink ~source ~backpressure =
       let is_forgotten_lost forgotten_opt =
         forgotten_opt |> Option.fold ~none:0 ~some:(fun forgotten ->
@@ -250,14 +256,9 @@ module Make
         Lwt_mvar.take sink >>= fun ring_field ->
         begin match ring_field.meta with
           | `Ack ->
+            Logs.err (fun m -> m "DEBUG: feed_source: received `Ack");
             Lwt_stream.junk_old (fst backpressure) >>= fun _ ->
-            let rec fill_backpressure = function
-              | 0 -> Lwt.return_unit
-              | n -> 
-                (snd backpressure) @@ Some ();
-                fill_backpressure @@ pred n
-            in
-            fill_backpressure ack_sender_bound >>= fun () ->
+            fill_backpressure backpressure ack_sender_bound >>= fun () ->
             loop_packets
               ~received_packets
               ~last_feeded_packet_index
@@ -277,9 +278,10 @@ module Make
           | `Normal ->
             let received_packets = succ received_packets in
             begin (*Sending an `Ack *)
-              if received_packets mod ack_receiver_bound = 0 then
+              if received_packets mod ack_receiver_bound = 0 then (
+                Logs.err (fun m -> m "DEBUG: feed_source: sending `Ack");
                 send_ack ()
-              else Lwt.return (Ok ())
+              ) else Lwt.return (Ok ())
             end >>= fun send_ack_result ->
             Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
             let expected_packet_index =
@@ -373,6 +375,9 @@ module Make
           let conn_id = packet.Packet.T.header.connection_id in
           begin match Conn_map.find_opt conn_id !conn_map with
           | None -> 
+            Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and creating connection"
+                packet.Packet.T.header.index
+            );
             let ring_field =
               let data = Some data in
               let packet_index = packet.Packet.T.header.index in
@@ -383,6 +388,7 @@ module Make
             let source = Lwt_stream.create_bounded bounded_stream_size in
             let writev_ctx = { dst = src; dst_port = src_port; src_port = port } in
             let backpressure = Lwt_stream.create () in
+            fill_backpressure backpressure ack_sender_bound >>= fun () ->
             let feeder =
               feed_source
                 ~conn_id
@@ -406,6 +412,9 @@ module Make
             conn_map := conn_map';
             user_callback flow
           | Some flow ->
+            Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and found connection"
+                packet.Packet.T.header.index
+            );
             let ring_field =
               let data = Some data in
               let packet_index = packet.Packet.T.header.index in
@@ -455,6 +464,7 @@ module Make
       let port = Udp_port.allocate () in
       let writev_ctx = { dst = pier; dst_port = pier_port; src_port = port } in
       let backpressure = Lwt_stream.create () in
+      fill_backpressure backpressure ack_sender_bound >>= fun () ->
       let feeder =
         feed_source
           ~conn_id
@@ -498,10 +508,18 @@ module Make
       (*> goto should also send `Expecting_ack within some timeout
         .. and this expecting-ack thread is cancelled if next backpressure
            becomes available*)
-      Lwt_stream.next backpressure >>= fun () -> 
+      let backpressure_t = Lwt_stream.next backpressure in
+      if Lwt.state backpressure_t = Sleep then
+        Logs.err (fun m -> m "DEBUG: writev: backpressure!");
+      backpressure_t >>= fun () ->
       (*> goto maybe; this ttl didn't fix anything, so maybe set to default*)
-      S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
-      |> error_to_msg S.UDP.pp_error
+      Logs.err (fun m -> m "DEBUG: writev: writing!");
+      begin
+        S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
+        |> error_to_msg S.UDP.pp_error
+      end >|= fun r ->
+      Logs.err (fun m -> m "DEBUG: writev: wrote!");
+      r
 
     let dst flow = flow.pier, flow.pier_port
 
