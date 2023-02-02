@@ -145,16 +145,22 @@ module Make
           layer protocol
     *)
     
-    let ack_receiver_bound = 4
-    let ack_sender_bound = ack_receiver_bound + 4
-
+    (* let ack_receiver_bound = 4 *)
+    (* let ack_sender_bound = ack_receiver_bound + 4 *)
+    
     (*> TESTING different values*)
+    let ack_receiver_bound = 1
+    let ack_sender_bound = ack_receiver_bound 
+    (*> works*)
+    (* let ack_receiver_bound = 1 *)
+    (* let ack_sender_bound = ack_receiver_bound *)
+    (*> other tests*)
     (* let ack_receiver_bound = 1 *)
     (* let ack_sender_bound = ack_receiver_bound *)
     (* let ack_receiver_bound = 10 *)
     (* let ack_sender_bound = ack_receiver_bound + 4 *)
     
-    let ring_size = ack_sender_bound
+    let ring_size = ack_sender_bound + 5
     (*> Note: just set this to some value where upper and lower protocol can run at slightly
       different speeds, to allow some packets to take longer to consumer than others in upper
       protocol
@@ -261,6 +267,9 @@ module Make
           ~lost_packets
           ring
         =
+        Logs.err (fun m -> m "DEBUG: feed_source: { delayed = %d; lost = %d }"
+            delayed_packets lost_packets
+        );
         Lwt_mvar.take sink >>= fun ring_field ->
         begin match ring_field.meta with
           | `Ack ->
@@ -432,6 +441,17 @@ module Make
              .. and data could get sent as Packet.t to upper layer
                 .. though would bring more complexity to this layer..
         *)
+        (*> goto only do this if last packet was not partial -
+          * if prev-was-partial, then pass this next datapiece like what upper protocol expects
+            * @brian; how to communicate this?
+              * need to match src-port with connection-id?
+          * @idea;
+            * put together udp packet in this callback, before giving to handle_packet
+              * as this already parses packet header
+              * to separate logic
+              * the one reconstructing packet need to know when packet is `Done
+                * to know to append or not next time
+        *)
         match Packet.Tcp.init ~ignore_data:true data with
         | Ok (`Done (packet, _rest)) ->
           handle_packet
@@ -442,10 +462,12 @@ module Make
         | Ok (`Unfinished (`Partial (unfinished:Packet.partial))) ->
           begin match unfinished.header with
             | None ->
-              failwith "Udp_flow: `Unfinished with no header is unsupported \
-                        for UDP"
+              (*gomaybe; this could be supported for all but first packet*)
+              failwith "Udp_flow: `Unfinished packet with no header is \
+                        unsupported for UDP"
             | Some header -> 
               Logs.err (fun m -> m "DEBUG: listen.callback: using unfinished packet header");
+              (*> goto remove this case when reconstructing packet here*)
               handle_packet
                 ~src ~src_port ~port
                 ~user_callback
