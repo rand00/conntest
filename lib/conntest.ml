@@ -145,9 +145,6 @@ module Make
           layer protocol
     *)
     
-    (* let ack_receiver_bound = 4 *)
-    (* let ack_sender_bound = ack_receiver_bound + 4 *)
-    
     (*> TESTING different values*)
     let ack_receiver_bound = 1
     let ack_sender_bound = ack_receiver_bound 
@@ -155,16 +152,16 @@ module Make
     (* let ack_receiver_bound = 1 *)
     (* let ack_sender_bound = ack_receiver_bound *)
     (*> other tests*)
-    (* let ack_receiver_bound = 1 *)
-    (* let ack_sender_bound = ack_receiver_bound *)
+    (* let ack_receiver_bound = 4 *)
+    (* let ack_sender_bound = ack_receiver_bound + 4 *)
     (* let ack_receiver_bound = 10 *)
     (* let ack_sender_bound = ack_receiver_bound + 4 *)
     
     let ring_size = ack_sender_bound + 5
+                    
     (*> Note: just set this to some value where upper and lower protocol can run at slightly
       different speeds, to allow some packets to take longer to consumer than others in upper
-      protocol
-    *)
+      protocol *)
     let bounded_stream_size = ring_size * 2
 
     type ring_field = {
@@ -384,43 +381,49 @@ module Make
       let conn_id = header.Packet.T.connection_id in
       begin match Conn_map.find_opt conn_id !conn_map with
         | None -> 
-          Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and creating connection"
-              header.Packet.T.index
-          );
-          let ring_field =
-            let data = Some data in
-            let packet_index = header.Packet.T.index in
-            let meta = header.Packet.T.meta in
-            { data; packet_index; meta }
-          in
-          let sink = Lwt_mvar.create ring_field in
-          let source = Lwt_stream.create_bounded bounded_stream_size in
-          let writev_ctx = { dst = src; dst_port = src_port; src_port = port } in
-          let backpressure = Lwt_stream.create () in
-          fill_backpressure backpressure ack_sender_bound >>= fun () ->
-          let feeder =
-            feed_source
-              ~conn_id
-              ~writev_ctx
-              ~sink
-              ~source
-              ~backpressure
-          in
-          let flow = {
-            is_client = false;
-            sink;
-            source;
-            port;
-            pier = src;
-            pier_port = src_port;
-            conn_id;
-            feeder;
-            backpressure;
-          } in
-          let conn_map' = Conn_map.add conn_id flow !conn_map in
-          conn_map := conn_map';
-          Lwt.async (fun () -> user_callback flow);
-          Lwt.return_unit
+          let packet_index = header.Packet.T.index in
+          if packet_index > 0 then
+            failwith "Udp_flow: Received an initial packet with index > 0"
+          else begin
+            Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and \
+                                  creating connection"
+                header.Packet.T.index
+            );
+            let ring_field =
+              let data = Some data in
+              let meta = header.Packet.T.meta in
+              { data; packet_index; meta }
+            in
+            let sink = Lwt_mvar.create ring_field in
+            let source = Lwt_stream.create_bounded bounded_stream_size in
+            let writev_ctx =
+              { dst = src; dst_port = src_port; src_port = port } in
+            let backpressure = Lwt_stream.create () in
+            fill_backpressure backpressure ack_sender_bound >>= fun () ->
+            let feeder =
+              feed_source
+                ~conn_id
+                ~writev_ctx
+                ~sink
+                ~source
+                ~backpressure
+            in
+            let flow = {
+              is_client = false;
+              sink;
+              source;
+              port;
+              pier = src;
+              pier_port = src_port;
+              conn_id;
+              feeder;
+              backpressure;
+            } in
+            let conn_map' = Conn_map.add conn_id flow !conn_map in
+            conn_map := conn_map';
+            Lwt.async (fun () -> user_callback flow);
+            Lwt.return_unit
+          end
         | Some flow ->
           Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and found connection"
               header.Packet.T.index
@@ -441,7 +444,8 @@ module Make
              .. and data could get sent as Packet.t to upper layer
                 .. though would bring more complexity to this layer..
         *)
-        (*> goto only do this if last packet was not partial -
+        (*> gomaybe only do this if last packet was not partial -
+          * < @problem; can't put together packets with no header in UDP :/
           * if prev-was-partial, then pass this next datapiece like what upper protocol expects
             * @brian; how to communicate this?
               * need to match src-port with connection-id?
@@ -462,22 +466,21 @@ module Make
         | Ok (`Unfinished (`Partial (unfinished:Packet.partial))) ->
           begin match unfinished.header with
             | None ->
-              (*gomaybe; this could be supported for all but first packet*)
               failwith "Udp_flow: `Unfinished packet with no header is \
                         unsupported for UDP"
             | Some header -> 
-              Logs.err (fun m -> m "DEBUG: listen.callback: using unfinished packet header");
-              (*> goto remove this case when reconstructing packet here*)
-              handle_packet
-                ~src ~src_port ~port
-                ~user_callback
-                ~header
-                ~data
+              failwith "Udp_flow: `Unfinished packet with header is unsupported \
+                        for UDP"
+              (* handle_packet *)
+              (*   ~src ~src_port ~port *)
+              (*   ~user_callback *)
+              (*   ~header *)
+              (*   ~data *)
           end
         | Ok (`Unfinished _) ->
           failwith "Udp_flow: `Unfinished with no header is unsupported for UDP"
         | Error (`Msg err) ->
-          failwith ("Udp_flow: Error: "^err) 
+          failwith ("Udp_flow: "^err) 
       in
       S.UDP.listen udp_stack ~port callback
 
