@@ -11,7 +11,7 @@ module Header = struct
 
   type meta = [
     | `Normal
-    | `Ack
+    | `Ack of int (*packet-index*)
     | `Resend_ack
   ]
   [@@deriving yojson]

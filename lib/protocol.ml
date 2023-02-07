@@ -28,7 +28,7 @@ module type FLOW = sig
     id:string -> (Ipaddr.t * int) -> (t, _ error) Lwt_result.t
   
   val read : t -> (read, _ error) Lwt_result.t
-  val writev : t -> Cstruct.t list -> (unit, _ error) Lwt_result.t
+  val writev : t -> index:int -> Cstruct.t list -> (unit, _ error) Lwt_result.t
   val close : t -> unit Lwt.t
 
   val dst : t -> Ipaddr.t * int
@@ -172,7 +172,7 @@ module Make
         let pier = pier_of_ctx ctx in
         let data = protocol |> Protocol_msg.to_cstruct in
         let response = Packet.to_cstructs ~header ~data in
-        let* () = Flow.writev ctx.flow response in
+        let* () = Flow.writev ctx.flow response ~index:header.index in
         ctx.progress () >>= fun () ->
         let protocol = Some protocol in
         O.sent_packet ~pier ~header ~protocol;
@@ -184,7 +184,7 @@ module Make
         if n <= 0 then Lwt_result.return ctx else 
           let { flow; dst; dst_port; conn_id } = ctx in
           let response = Packet.to_cstructs ~header ~data in
-          let* () = Flow.writev flow response in
+          let* () = Flow.writev flow response ~index:header.index in
           ctx.progress () >>= fun () ->
           let protocol = None in
           O.sent_packet ~pier ~header ~protocol;
@@ -379,7 +379,7 @@ module Make
         let data = Protocol_msg.to_cstruct protocol in
         let* () = 
           Packet.to_cstructs ~header ~data
-          |> Flow.writev ctx.flow
+          |> Flow.writev ctx.flow ~index:header.index
         in
         ctx.progress () >>= fun () ->
         let protocol = Some protocol in
@@ -403,7 +403,7 @@ module Make
             }
             in
             let data = Packet.to_cstructs ~header ~data in
-            let* () = Flow.writev ctx.flow data in
+            let* () = Flow.writev ctx.flow data ~index:header.index in
             ctx.progress () >>= fun () ->
             let protocol = None in
             O.sent_packet ~pier ~header ~protocol;

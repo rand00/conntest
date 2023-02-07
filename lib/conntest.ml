@@ -70,7 +70,7 @@ module Make
 
     let read flow = S.TCP.read flow |> error_to_msg S.TCP.pp_error
 
-    let writev flow data =
+    let writev flow ~index:_ data =
       S.TCP.writev flow data |> error_to_msg S.TCP.pp_write_error
 
   end
@@ -194,6 +194,7 @@ module Make
       conn_id : string;
       (*<goto maybe; this could be avoided, as Conn_map has it as key*)
       backpressure : unit stream;
+      latest_written_packet_index : int ref;
     }
 
     let udp_stack = S.udp Sv.stack
@@ -222,7 +223,7 @@ module Make
         (snd backpressure) @@ Some ();
         fill_backpressure backpressure @@ pred n
 
-    let feed_source ~conn_id ~writev_ctx ~sink ~source ~backpressure =
+    let feed_source ~conn_id ~writev_ctx ~sink ~source ~backpressure ~latest_written_packet_index =
       let is_forgotten_lost forgotten_opt =
         forgotten_opt |> Option.fold ~none:0 ~some:(fun forgotten ->
           if Option.is_none forgotten.data then 1 else 0
@@ -250,12 +251,12 @@ module Make
         in
         aux ~lost_packets:0 ~ring packet_index_diff
       in
-      let send_ack () =
+      let send_ack ~ack_index =
         let data =
           let header = Packet.T.{
             index = -1;
             connection_id = conn_id;
-            meta = `Ack;
+            meta = `Ack ack_index;
           } in
           Packet.to_cstructs ~header ~data:Cstruct.empty
         in
@@ -273,17 +274,24 @@ module Make
         );
         Lwt_mvar.take sink >>= fun ring_field ->
         begin match ring_field.meta with
-          | `Ack ->
-            Logs.err (fun m -> m "DEBUG: feed_source: received `Ack");
-            (*> goto problem;
+          | `Ack ack_index ->
+            Logs.err (fun m -> m "DEBUG: feed_source: received `Ack (i=%d)"
+                ack_index);
+            (*goo> *)
+            (*> goto problem; 
               backpressure should be calculated relative to which packet-index
               was ack'd
               * else if one is really fast at sending, then one will receive ack
                 after sending all possible packets
                 * where ack is interpreted as ack latest, which is not the case
             *)
+            let diff_sent_v_ack = !latest_written_packet_index - ack_index in
+            let n_backpressure =
+              ack_sender_bound - diff_sent_v_ack
+              |> Int.max 0
+            in
             Lwt_stream.junk_old (fst backpressure) >>= fun _ ->
-            fill_backpressure backpressure ack_sender_bound >>= fun () ->
+            fill_backpressure backpressure n_backpressure >>= fun () ->
             loop_packets
               ~received_packets
               ~last_feeded_packet_index
@@ -305,7 +313,7 @@ module Make
             begin (*Sending an `Ack *)
               if received_packets mod ack_receiver_bound = 0 then (
                 Logs.err (fun m -> m "DEBUG: feed_source: sending `Ack");
-                send_ack ()
+                send_ack ~ack_index:ring_field.packet_index
               ) else Lwt.return (Ok ())
             end >>= fun send_ack_result ->
             Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
@@ -411,6 +419,7 @@ module Make
               { dst = src; dst_port = src_port; src_port = port } in
             let backpressure = Lwt_stream.create () in
             fill_backpressure backpressure ack_sender_bound >>= fun () ->
+            let latest_written_packet_index = ref 0 in
             let feeder =
               feed_source
                 ~conn_id
@@ -418,6 +427,7 @@ module Make
                 ~sink
                 ~source
                 ~backpressure
+                ~latest_written_packet_index
             in
             let flow = {
               is_client = false;
@@ -429,6 +439,7 @@ module Make
               conn_id;
               feeder;
               backpressure;
+              latest_written_packet_index;
             } in
             let conn_map' = Conn_map.add conn_id flow !conn_map in
             conn_map := conn_map';
@@ -530,6 +541,7 @@ module Make
       let writev_ctx = { dst = pier; dst_port = pier_port; src_port = port } in
       let backpressure = Lwt_stream.create () in
       fill_backpressure backpressure ack_sender_bound >>= fun () ->
+      let latest_written_packet_index = ref 0 in
       let feeder =
         feed_source
           ~conn_id
@@ -537,6 +549,7 @@ module Make
           ~sink
           ~source
           ~backpressure
+          ~latest_written_packet_index
       in
       let flow = {
         is_client = true;
@@ -548,6 +561,7 @@ module Make
         conn_id;
         feeder;
         backpressure;
+        latest_written_packet_index;
       } in
       let conn_map' = Conn_map.add id flow !conn_map in
       conn_map := conn_map';
@@ -560,7 +574,7 @@ module Make
       | Error (`Msg _ as msg) -> Error msg
     (*< Note: Opened polymorphic variant msg-type*)
 
-    let writev flow datas =
+    let writev flow ~index datas =
       (*> Note: it's important that all cstructs are written at once for ordering*)
       let data = Cstruct.concat datas in
       let src_port = flow.port in
@@ -577,6 +591,7 @@ module Make
       if Lwt.state backpressure_t = Sleep then
         Logs.err (fun m -> m "DEBUG: writev: backpressure!");
       backpressure_t >>= fun () ->
+      flow.latest_written_packet_index := index;
       (*> goto maybe; this ttl didn't fix anything, so maybe set to default*)
       S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
