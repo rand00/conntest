@@ -146,14 +146,18 @@ module Make
     *)
     
     (*> TESTING different values*)
-    let ack_receiver_bound = 1
-    let ack_sender_bound = ack_receiver_bound 
-    (*> works*)
     (* let ack_receiver_bound = 1 *)
     (* let ack_sender_bound = ack_receiver_bound *)
-    (*> other tests*)
+    let ack_receiver_bound = 4
+    let ack_sender_bound = ack_receiver_bound + 4
+    (*> works @ unix stack*)
+    (* let ack_receiver_bound = 1 *)
+    (* let ack_sender_bound = ack_receiver_bound *)
+    (*> works @ mirage stack @ localhost
+      (150% speedup vs unix stack settings (tested on mirage stack))*)
     (* let ack_receiver_bound = 4 *)
     (* let ack_sender_bound = ack_receiver_bound + 4 *)
+    (*> other tests*)
     (* let ack_receiver_bound = 10 *)
     (* let ack_sender_bound = ack_receiver_bound + 4 *)
     
@@ -271,6 +275,13 @@ module Make
         begin match ring_field.meta with
           | `Ack ->
             Logs.err (fun m -> m "DEBUG: feed_source: received `Ack");
+            (*> goto problem;
+              backpressure should be calculated relative to which packet-index
+              was ack'd
+              * else if one is really fast at sending, then one will receive ack
+                after sending all possible packets
+                * where ack is interpreted as ack latest, which is not the case
+            *)
             Lwt_stream.junk_old (fst backpressure) >>= fun _ ->
             fill_backpressure backpressure ack_sender_bound >>= fun () ->
             loop_packets
@@ -478,7 +489,7 @@ module Make
               (*   ~data *)
           end
         | Ok (`Unfinished _) ->
-          failwith "Udp_flow: `Unfinished with no header is unsupported for UDP"
+          failwith "Udp_flow: `Unfinished packet is unsupported for UDP"
         | Error (`Msg err) ->
           failwith ("Udp_flow: "^err) 
       in
