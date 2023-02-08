@@ -137,36 +137,18 @@ module Make
   module Udp_flow = struct
     (* include S.UDP *)
 
-    (*> Note: must not be bigger than some internal OS buffer for UDP packets
-      being received
-      * goto research this semantics
-        * if there exist no such buffer, then an ack should be sent after each packet
-        * note that this layer of the protocol already consumes packets faster than upper
-          layer protocol
-    *)
-    
-    (*> TESTING different values*)
-    (* let ack_receiver_bound = 1 *)
-    (* let ack_sender_bound = ack_receiver_bound *)
-    let ack_receiver_bound = 4
+    let src = Logs.Src.create "conntest:udp_flow" ~doc:"udp debugging"
+    module Log = (val Logs.src_log src : Logs.LOG)
+
+    (*> Note: these values work @ localhost with both unix + mirage stack
+        (after recent fixes) *)
+    let ack_receiver_bound = 6
     let ack_sender_bound = ack_receiver_bound + 4
-    (*> works @ unix stack*)
-    (* let ack_receiver_bound = 1 *)
-    (* let ack_sender_bound = ack_receiver_bound *)
-    (*> works @ mirage stack @ localhost
-      (150% speedup vs unix stack settings (tested on mirage stack))*)
-    (* let ack_receiver_bound = 4 *)
-    (* let ack_sender_bound = ack_receiver_bound + 4 *)
-    (*> other tests*)
-    (* let ack_receiver_bound = 10 *)
-    (* let ack_sender_bound = ack_receiver_bound + 4 *)
-    
     let ring_size = ack_sender_bound + 5
-                    
-    (*> Note: just set this to some value where upper and lower protocol can run at slightly
+    let bounded_stream_size = ring_size * 2
+    (*< Note: just set this to some value where upper and lower protocol can run at slightly
       different speeds, to allow some packets to take longer to consumer than others in upper
       protocol *)
-    let bounded_stream_size = ring_size * 2
 
     type ring_field = {
       data : Cstruct.t option; (*None => packet is late*)
@@ -269,22 +251,14 @@ module Make
           ~lost_packets
           ring
         =
-        Logs.err (fun m -> m "DEBUG: feed_source: { delayed = %d; lost = %d }"
+        Log.debug (fun m -> m "feed_source: { delayed = %d; lost = %d }"
             delayed_packets lost_packets
         );
         Lwt_mvar.take sink >>= fun ring_field ->
         begin match ring_field.meta with
           | `Ack ack_index ->
-            Logs.err (fun m -> m "DEBUG: feed_source: received `Ack (i=%d)"
+            Log.debug (fun m -> m "feed_source: received `Ack (i=%d)"
                 ack_index);
-            (*goo> *)
-            (*> goto problem; 
-              backpressure should be calculated relative to which packet-index
-              was ack'd
-              * else if one is really fast at sending, then one will receive ack
-                after sending all possible packets
-                * where ack is interpreted as ack latest, which is not the case
-            *)
             let diff_sent_v_ack = !latest_written_packet_index - ack_index in
             let n_backpressure =
               ack_sender_bound - diff_sent_v_ack
@@ -298,6 +272,12 @@ module Make
               ~delayed_packets
               ~lost_packets
               ring
+          (*> goto make general: `Resend (`Ack | `Packet of index)
+            .. as it's not just ack's that conntest protocol depends on,
+               but also certain messages when not bandwidth-monitoring
+            * @idea; could have a ring-buffer (parallel to existing ring-buffer),
+              containing all recently sent packets
+          *)
           | `Resend_ack -> failwith "todo"
           (*goto howto;
             * can't
@@ -312,11 +292,11 @@ module Make
             let received_packets = succ received_packets in
             begin (*Sending an `Ack *)
               if received_packets mod ack_receiver_bound = 0 then (
-                Logs.err (fun m -> m "DEBUG: feed_source: sending `Ack");
+                Log.debug (fun m -> m "feed_source: sending `Ack");
                 send_ack ~ack_index:ring_field.packet_index
               ) else Lwt.return (Ok ())
             end >>= fun send_ack_result ->
-            Logs.err (fun m -> m "DEBUG: feed_source: UDP pkt recvd");
+            Log.debug (fun m -> m "feed_source: UDP pkt recvd");
             let expected_packet_index =
               match Ring.get_latest ring with
               | None -> 0
@@ -330,7 +310,7 @@ module Make
                 (*> Note: this is just easier than calculating index for 'set'
                    .. and ring shouldn't be long
                 *)
-                Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff < 0");
+                Log.debug (fun m -> m "feed_source: packet_index_diff < 0");
                 let did_set = ref false in
                 let ring = ring |> Ring.map (fun ring_field' ->
                   if ring_field'.packet_index = ring_field.packet_index then (
@@ -346,7 +326,7 @@ module Make
                 (*< goto here out-of-order also need to be tracked*)
               ) else ((*if packet_index_diff >= 0*)
                 if packet_index_diff > 0 then 
-                  Logs.err (fun m -> m "DEBUG: feed_source: packet_index_diff > 0 (%d)"
+                  Log.debug (fun m -> m "feed_source: packet_index_diff > 0 (%d)"
                       packet_index_diff
                   );
                 let ring, lost_packets_now =
@@ -371,7 +351,8 @@ module Make
                     `Data (Option.get ring_field'.data)
                   )
                 in
-                Logs.err (fun m -> m "DEBUG: feed_source: pushing packet from RING (bounded-stream elements = %d)"
+                Log.debug (fun m -> m "feed_source: pushing packet from RING \
+                                       (bounded-stream elements = %d)"
                     ((snd source)#count)
                 );
                 (snd source)#push data >|= fun () ->
@@ -404,8 +385,8 @@ module Make
           if packet_index > 0 then
             failwith "Udp_flow: Received an initial packet with index > 0"
           else begin
-            Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and \
-                                  creating connection"
+            Log.debug (fun m -> m "listen-callback: rcvd pkt(i=%d) and \
+                                   creating connection"
                 header.Packet.T.index
             );
             let ring_field =
@@ -447,7 +428,8 @@ module Make
             Lwt.return_unit
           end
         | Some flow ->
-          Logs.err (fun m -> m "DEBUG: listen-callback: rcvd pkt(i=%d) and found connection"
+          Log.debug (fun m -> m "listen-callback: rcvd pkt(i=%d) and found \
+                                 connection"
               header.Packet.T.index
           );
           let ring_field =
@@ -469,18 +451,6 @@ module Make
              .. and data could get sent as Packet.t to upper layer
                 .. though would bring more complexity to this layer..
         *)
-        (*> gomaybe only do this if last packet was not partial -
-          * < @problem; can't put together packets with no header in UDP :/
-          * if prev-was-partial, then pass this next datapiece like what upper protocol expects
-            * @brian; how to communicate this?
-              * need to match src-port with connection-id?
-          * @idea;
-            * put together udp packet in this callback, before giving to handle_packet
-              * as this already parses packet header
-              * to separate logic
-              * the one reconstructing packet need to know when packet is `Done
-                * to know to append or not next time
-        *)
         match Packet.Tcp.init ~ignore_data:true data_copy with
         | Ok (`Done (packet, _rest)) ->
           handle_packet
@@ -496,11 +466,6 @@ module Make
             | Some header -> 
               failwith "Udp_flow: `Unfinished packet with header is unsupported \
                         for UDP"
-              (* handle_packet *)
-              (*   ~src ~src_port ~port *)
-              (*   ~user_callback *)
-              (*   ~header *)
-              (*   ~data:data_copy *)
           end
         | Ok (`Unfinished _) ->
           failwith "Udp_flow: `Unfinished packet is unsupported for UDP"
@@ -582,7 +547,7 @@ module Make
       let data = Cstruct.concat datas in
       let src_port = flow.port in
       let dst, dst_port = flow.pier, flow.pier_port in
-      (*< spec:
+      (*< Note: spec:
         * listen-case: flow is only given to callback on recv first packet
         * connect-case: flow already has dst + dst_port
       *)
@@ -592,11 +557,10 @@ module Make
            becomes available*)
       let backpressure_t = Lwt_stream.next backpressure in
       if Lwt.state backpressure_t = Sleep then
-        Logs.err (fun m -> m "DEBUG: writev: backpressure!");
+        Log.debug (fun m -> m "writev: backpressure!");
       backpressure_t >>= fun () ->
       flow.latest_written_packet_index := index;
-      (*> goto maybe; this ttl didn't fix anything, so maybe set to default*)
-      S.UDP.write ~ttl:100 ~src_port ~dst ~dst_port udp_stack data
+      S.UDP.write ~src_port ~dst ~dst_port udp_stack data
       |> error_to_msg S.UDP.pp_error
 
     let dst flow = flow.pier, flow.pier_port
