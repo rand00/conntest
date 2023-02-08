@@ -461,6 +461,9 @@ module Make
 
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
+        let data_len = Cstruct.length data in
+        let data_copy = Cstruct.(create data_len) in
+        Cstruct.blit data 0 data_copy 0 data_len;
         (*> gomaybe; as we do this, and let upper layer protocol reparse
           .. then this parsing could be made to always happen in this layer,
              .. and data could get sent as Packet.t to upper layer
@@ -478,13 +481,13 @@ module Make
               * the one reconstructing packet need to know when packet is `Done
                 * to know to append or not next time
         *)
-        match Packet.Tcp.init ~ignore_data:true data with
+        match Packet.Tcp.init ~ignore_data:true data_copy with
         | Ok (`Done (packet, _rest)) ->
           handle_packet
             ~src ~src_port ~port
             ~user_callback
             ~header:packet.Packet.T.header
-            ~data
+            ~data:data_copy
         | Ok (`Unfinished (`Partial (unfinished:Packet.partial))) ->
           begin match unfinished.header with
             | None ->
@@ -497,7 +500,7 @@ module Make
               (*   ~src ~src_port ~port *)
               (*   ~user_callback *)
               (*   ~header *)
-              (*   ~data *)
+              (*   ~data:data_copy *)
           end
         | Ok (`Unfinished _) ->
           failwith "Udp_flow: `Unfinished packet is unsupported for UDP"
