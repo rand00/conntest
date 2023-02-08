@@ -31,19 +31,27 @@ to simulate how your production-unikernels will be connected.
 
 ### Features
 * Connect with as many `conntest` servers/clients as you want.
-* `TCP` protocol supported, with custom packet format.
+* The `conntest` protocol is abstracted on top of `TCP`/`UDP`:
+  * the `TCP` protocol is used as-is, where `conntest` adds a custom packet format on top
+  * the `UDP` protocol is supported with `TCP`-like semantics, currently including:
+    * packet reordering
+    * backpressure
 * Live updated CLI output via the `notty` library.
 * Enable/disable (two-way) bandwidth-monitoring per connection.
 * Choose packet-size when bandwidth-monitoring.
+  * Be aware that `UDP` datagrams should be around the size of the 
+    [maximum transmission unit](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
+    Try out different values - packets bigger than `MTU` will be fragmented at the `IP` layer;
+    where if a fragment is lost, the whole datagram is lost.
 * Latency monitoring (calculated as half the roundtrip time).
-* Choose between other CLI UIs - currently `notty` and `log` 
+* Choose between several different CLI UIs - currently `notty` and `log` 
   (`log` doesn't show stats for now, just logs packets).
+  * The UI's are fully abstracted away from the `conntest` protocol, so new ones 
+    can easily be added.
 
 ### To do
-* `UDP` support
-  * This is under development, where the `TCP`/`UDP` layer has been abstracted away, 
-    and `UDP` is being extended with package ordering + backpressure.
-* Show more stats:
+* `UDP` support for resending lost packets, including lost ack's
+* More stats:
   * lost packets (`UDP`)
   * packets out of order (`UDP`)
 * Show stats via alternative simple textual output. This is useful if you run your unikernel 
