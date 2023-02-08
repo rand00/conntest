@@ -33,7 +33,7 @@ to simulate how your production-unikernels will be connected.
 * Connect with as many `conntest` servers/clients as you want.
 * The `conntest` protocol is abstracted on top of `TCP`/`UDP`:
   * the `TCP` protocol is used as-is, where `conntest` adds a custom packet format on top
-  * the `UDP` protocol is supported with `TCP`-like semantics, currently including:
+  * the `UDP` protocol is extended with `TCP`-like semantics, currently including:
     * packet reordering
     * backpressure
 * Live updated CLI output via the `notty` library.
