@@ -760,6 +760,20 @@ module Notty_ui
               Fmt.str "%.1fMB/s" b
         in
         make_column "bndwdth" @@ I.string bandwidth_str
+      and delayed_packets_i =
+        let str =
+          match conn.delayed_packets with
+          | None -> "N/A"
+          | Some n -> Fmt.str "%d" n
+        in
+        make_column "#delayd" @@ I.string str
+      and lost_packets_i =
+        let str =
+          match conn.lost_packets with
+          | None -> "N/A"
+          | Some n -> Fmt.str "%d" n
+        in
+        make_column "#lost" @@ I.string str
       in
       [
         [
@@ -770,6 +784,8 @@ module Notty_ui
           latency_i;
           bandwidth_i;
           packet_size_i;
+          delayed_packets_i;
+          lost_packets_i;
         ];
       ]
       |> List.flatten

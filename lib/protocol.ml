@@ -20,7 +20,6 @@ module type FLOW = sig
 
   type t
 
-  (*> Note: e.g. S.TCP.unlisten (S.tcp Sv.stack) ~port*)
   val listen : port:int -> (t -> unit Lwt.t) -> unit
   val unlisten : port:int -> unit
 

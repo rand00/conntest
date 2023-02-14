@@ -163,6 +163,18 @@ module Make
     type 'a stream = 'a Lwt_stream.t * ('a option -> unit)
 
     type err = [ `Msg of string ]
+
+    type partial_flow = {
+      is_client : bool;
+      sink : ring_field Lwt_mvar.t;
+      source : (Cstruct.t Mirage_flow.or_eof, err) result bounded_stream;
+      port : int;
+      pier : Ipaddr.t;
+      pier_port : int;
+      conn_id : string;
+      backpressure : unit stream;
+      latest_written_packet_index : int ref;
+    }
     
     (*> goto maybe; [sink, source, feeder] could be a single abstraction*)
     type t = {
@@ -192,8 +204,7 @@ module Make
       src_port : int;
     }
     
-    let writev' ~ctx datas =
-      let { src_port; dst; dst_port } = ctx in
+    let writev' ~dst ~dst_port ~src_port datas =
       (*> Note: it's important that all cstructs are written at once for ordering*)
       let data = Cstruct.concat datas in
       S.UDP.write ~src_port ~dst ~dst_port udp_stack data
@@ -206,7 +217,14 @@ module Make
         fill_backpressure backpressure @@ pred n
 
     (*> goto put arguments into new record type that is almost 'flow'*)
-    let feed_source ~conn_id ~writev_ctx ~sink ~source ~backpressure ~latest_written_packet_index =
+    let feed_source (flow:partial_flow) =
+      let pier : Types.Pier.t =
+        let protocol = `Udp in
+        let ip = flow.pier in
+        let port = flow.pier_port in
+        let conn_id = flow.conn_id in
+        { protocol; ip; port; conn_id }
+      in
       let is_forgotten_lost forgotten_opt =
         forgotten_opt |> Option.fold ~none:0 ~some:(fun forgotten ->
           if Option.is_none forgotten.data then 1 else 0
@@ -238,12 +256,12 @@ module Make
         let data =
           let header = Packet.T.{
             index = -1;
-            connection_id = conn_id;
+            connection_id = flow.conn_id;
             meta = `Ack ack_index;
           } in
           Packet.to_cstructs ~header ~data:Cstruct.empty
         in
-        writev' ~ctx:writev_ctx data
+        writev' ~dst:flow.pier ~dst_port:flow.pier_port ~src_port:flow.port data
       in
       let rec loop_packets
           ~received_packets
@@ -255,18 +273,30 @@ module Make
         Log.debug (fun m -> m "feed_source: { delayed = %d; lost = %d }"
             delayed_packets lost_packets
         );
-        Lwt_mvar.take sink >>= fun ring_field ->
+        if flow.is_client then (
+          Log.err (fun m -> m "DEBUG: O.Connect.set_lost_packets for conn-id %s"
+              pier.conn_id);
+          O.Connect.set_lost_packets ~pier lost_packets;
+          O.Connect.set_delayed_packets ~pier delayed_packets;
+        ) else (
+          Log.err (fun m -> m "DEBUG: O.Listen.set_lost_packets for conn-id %s"
+              pier.conn_id);
+          O.Listen.set_lost_packets ~pier lost_packets;
+          O.Listen.set_delayed_packets ~pier delayed_packets;
+        );
+        Lwt_mvar.take flow.sink >>= fun ring_field ->
         begin match ring_field.meta with
           | `Ack ack_index ->
             Log.debug (fun m -> m "feed_source: received `Ack (i=%d)"
                 ack_index);
-            let diff_sent_v_ack = !latest_written_packet_index - ack_index in
+            let diff_sent_v_ack =
+              !(flow.latest_written_packet_index) - ack_index in
             let n_backpressure =
               ack_sender_bound - diff_sent_v_ack
               |> Int.max 0
             in
-            Lwt_stream.junk_old (fst backpressure) >>= fun _ ->
-            fill_backpressure backpressure n_backpressure >>= fun () ->
+            Lwt_stream.junk_old (fst flow.backpressure) >>= fun _ ->
+            fill_backpressure flow.backpressure n_backpressure >>= fun () ->
             loop_packets
               ~received_packets
               ~last_feeded_packet_index
@@ -354,9 +384,9 @@ module Make
                 in
                 Log.debug (fun m -> m "feed_source: pushing packet from RING \
                                        (bounded-stream elements = %d)"
-                    ((snd source)#count)
+                    ((snd flow.source)#count)
                 );
-                (snd source)#push data >|= fun () ->
+                (snd flow.source)#push data >|= fun () ->
                 let last_feeded_packet_index = ring_field'.packet_index in
                 last_feeded_packet_index, seen_empty_data
               else
@@ -378,8 +408,12 @@ module Make
         ~lost_packets:0
         (Ring.make ring_size)
 
-    let handle_packet ~src ~src_port ~port ~user_callback ~header ~data =
-      let conn_id = header.Packet.T.connection_id in
+    let handle_packet
+        ~src ~src_port
+        ~port
+        ~user_callback
+        ~header ~data =
+      let conn_id = header.Packet.connection_id in
       begin match Conn_map.find_opt conn_id !conn_map with
         | None -> 
           let packet_index = header.Packet.T.index in
@@ -402,26 +436,32 @@ module Make
             let backpressure = Lwt_stream.create () in
             fill_backpressure backpressure ack_sender_bound >>= fun () ->
             let latest_written_packet_index = ref 0 in
+            let is_client = false in
             let feeder =
-              feed_source
-                ~conn_id
-                ~writev_ctx
-                ~sink
-                ~source
-                ~backpressure
-                ~latest_written_packet_index
+              let partial_flow = {
+                is_client;
+                sink;
+                source;
+                port;
+                pier = src;
+                pier_port = src_port;
+                conn_id;
+                backpressure;
+                latest_written_packet_index;
+              } in
+              feed_source partial_flow
             in
             let flow = {
-              is_client = false;
+              is_client;
               sink;
               source;
               port;
               pier = src;
               pier_port = src_port;
               conn_id;
-              feeder;
               backpressure;
               latest_written_packet_index;
+              feeder;
             } in
             let conn_map' = Conn_map.add conn_id flow !conn_map in
             conn_map := conn_map';
@@ -512,17 +552,23 @@ module Make
       let backpressure = Lwt_stream.create () in
       fill_backpressure backpressure ack_sender_bound >>= fun () ->
       let latest_written_packet_index = ref 0 in
+      let is_client = true in
       let feeder =
-        feed_source
-          ~conn_id
-          ~writev_ctx
-          ~sink
-          ~source
-          ~backpressure
-          ~latest_written_packet_index
+        let partial_flow = {
+          is_client;
+          sink;
+          source;
+          port;
+          pier;
+          pier_port;
+          conn_id;
+          backpressure;
+          latest_written_packet_index;
+        } in
+        feed_source partial_flow
       in
       let flow = {
-        is_client = true;
+        is_client;
         sink;
         source;
         port;
