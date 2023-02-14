@@ -205,6 +205,7 @@ module Make
         (snd backpressure) @@ Some ();
         fill_backpressure backpressure @@ pred n
 
+    (*> goto put arguments into new record type that is almost 'flow'*)
     let feed_source ~conn_id ~writev_ctx ~sink ~source ~backpressure ~latest_written_packet_index =
       let is_forgotten_lost forgotten_opt =
         forgotten_opt |> Option.fold ~none:0 ~some:(fun forgotten ->
@@ -425,6 +426,7 @@ module Make
             let conn_map' = Conn_map.add conn_id flow !conn_map in
             conn_map := conn_map';
             Lwt.async (fun () -> user_callback flow);
+            (* user_callback flow *)
             Lwt.return_unit
           end
         | Some flow ->

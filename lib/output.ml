@@ -480,13 +480,12 @@ module Notty_ui
               Some { data with i; bandwidth_snapshot } 
           ) acc
 
-      let connection_state ~typ ~protocol
-          acc (event, (latencies, bandwidths))
-        =
+      let connection_state ~typ acc (event, (latencies, bandwidths)) =
         let elapsed_ns = Clock.elapsed_ns () in
         match event with
         | `New_connection pier ->
-          let start_time = elapsed_ns in 
+          let start_time = elapsed_ns in
+          let protocol = pier.Pier.protocol in
           let conn = Connection.make ~typ ~protocol ~start_time ~pier in
           acc |> Conn_id_map.add pier.conn_id conn
         | `Closing_connection pier ->
@@ -579,14 +578,13 @@ module Notty_ui
 
       let connections_e =
         let typ = `Server in
-        let protocol = `Tcp in
         let sampled_s =
           S.l2 ~eq:Eq.never Tuple.mk2
             latencies_s
             bandwidths_s
         in
         S.sample Tuple.mk2 input_e sampled_s
-        |> E.fold (Calc.connection_state ~typ ~protocol) Conn_id_map.empty
+        |> E.fold (Calc.connection_state ~typ) Conn_id_map.empty
 
       let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
 
@@ -633,14 +631,13 @@ module Notty_ui
 
       let connections_e =
         let typ = `Client in
-        let protocol = `Tcp in
         let sampled_s =
           S.l2 ~eq:Eq.never Tuple.mk2
             latencies_s
             bandwidths_s
         in
         S.sample Tuple.mk2 input_e sampled_s
-        |> E.fold (Calc.connection_state ~typ ~protocol) Conn_id_map.empty
+        |> E.fold (Calc.connection_state ~typ) Conn_id_map.empty
 
       let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
 
