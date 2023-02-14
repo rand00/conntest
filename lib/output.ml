@@ -31,6 +31,9 @@ module type S = sig
       pier:Pier.t
       -> header:Packet.header -> protocol:Protocol_msg.t option -> unit
 
+    val set_lost_packets : pier:Pier.t -> int -> unit
+    val set_delayed_packets : pier:Pier.t -> int -> unit
+
   end
 
   module Connect : sig
@@ -60,6 +63,9 @@ module type S = sig
     val closing_flow : pier:Pier.t -> unit
     (*> goto remove?*)
     val closed_flow : pier:Pier.t -> unit
+
+    val set_lost_packets : pier:Pier.t -> int -> unit
+    val set_delayed_packets : pier:Pier.t -> int -> unit
 
   end
 
@@ -133,6 +139,9 @@ module Log_stdout () : S = struct
            |> Option.map Protocol_msg.to_string
            |> Option.value ~default:"None")
       )
+
+    let set_lost_packets ~pier n = ()
+    let set_delayed_packets ~pier n = ()
 
   end
 
@@ -214,6 +223,9 @@ module Log_stdout () : S = struct
         m "closed %s flow to %s:%d"
           (proto_name protocol) (Ipaddr.to_string ip) port)
 
+    let set_lost_packets ~pier n = ()
+    let set_delayed_packets ~pier n = ()
+        
   end
 
 end
@@ -256,8 +268,8 @@ module Connection = struct
       latency : Int64.t option; (*ns*)
       bandwidth : float option; (*MB/sec*)
       packet_size : int option; (*bytes*)
-      (* lost_packets : int option; *)
-      (* out_of_order_packets : int option; *)
+      lost_packets : int option;
+      delayed_packets : int option;
     }
 
   end
@@ -276,6 +288,8 @@ module Connection = struct
     latency = None;
     bandwidth = None;
     packet_size = None;
+    lost_packets = None;
+    delayed_packets = None;
   }
 
 end
@@ -333,12 +347,15 @@ module Notty_ui
 
     module Listen = struct
 
+      (*goto can share most with Connect*)
       type event = [
         | `New_connection of Pier.t
         | `Closing_connection of Pier.t
         | `Error of (Pier.t * string)
         | `Recv_packet of (Pier.t * Protocol_msg.t option)
         | `Sent_packet of (Pier.t * Protocol_msg.t option)
+        | `Set_lost_packets of (Pier.t * int)
+        | `Set_delayed_packets of (Pier.t * int)
       ]
 
       let (e : event E.t), eupd = E.create ()
@@ -361,6 +378,12 @@ module Notty_ui
       let sent_packet ~pier ~header ~protocol =
         eupd @@ `Sent_packet (pier, protocol)
 
+      let set_lost_packets ~pier n =
+        eupd @@ `Set_lost_packets (pier, n)
+        
+      let set_delayed_packets ~pier n =
+        eupd @@ `Set_delayed_packets (pier, n)
+
     end
 
     module Connect = struct
@@ -372,6 +395,8 @@ module Notty_ui
         (* | `Error of (Pier.t * string) *)
         | `Recv_packet of (Pier.t * Protocol_msg.t option)
         | `Sent_packet of (Pier.t * Protocol_msg.t option)
+        | `Set_lost_packets of (Pier.t * int)
+        | `Set_delayed_packets of (Pier.t * int)
       ]
 
       let (e : event E.t), eupd = E.create ()
@@ -402,6 +427,12 @@ module Notty_ui
 
       let closed_flow ~pier =
         () (*goto*)
+
+      let set_lost_packets ~pier n =
+        eupd @@ `Set_lost_packets (pier, n)
+        
+      let set_delayed_packets ~pier n =
+        eupd @@ `Set_delayed_packets (pier, n)
 
     end
 
@@ -533,6 +564,16 @@ module Notty_ui
             | Some conn ->
               let sent_packets = succ conn.sent_packets in
               Some { conn with sent_packets }
+          ) acc
+        | `Set_lost_packets (pier, n) ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> None 
+            | Some conn -> Some { conn with lost_packets = Some n }
+          ) acc
+        | `Set_delayed_packets (pier, n) ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> None 
+            | Some conn -> Some { conn with delayed_packets = Some n }
           ) acc
 
     end
