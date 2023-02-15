@@ -70,7 +70,7 @@ module Make
 
     let read flow = S.TCP.read flow |> error_to_msg S.TCP.pp_error
 
-    let writev flow ~index:_ data =
+    let writev flow ~index:_ ~conn_id:_ data =
       S.TCP.writev flow data |> error_to_msg S.TCP.pp_write_error
 
   end
@@ -171,7 +171,8 @@ module Make
       port : int;
       pier : Ipaddr.t;
       pier_port : int;
-      conn_id : string;
+      client_conn_id : string;
+      conn_id : string option ref;
       backpressure : unit stream;
       latest_written_packet_index : int ref;
     }
@@ -185,8 +186,10 @@ module Make
       port : int;
       pier : Ipaddr.t;
       pier_port : int;
-      conn_id : string;
-      (*<goto maybe; this could be avoided, as Conn_map has it as key*)
+      client_conn_id : string;
+      conn_id : string option ref;
+      (*< Note: passed via `writev` (for server) as it's needed for passing
+          stats to Output module*)
       backpressure : unit stream;
       latest_written_packet_index : int ref;
     }
@@ -216,15 +219,7 @@ module Make
         (snd backpressure) @@ Some ();
         fill_backpressure backpressure @@ pred n
 
-    (*> goto put arguments into new record type that is almost 'flow'*)
     let feed_source (flow:partial_flow) =
-      let pier : Types.Pier.t =
-        let protocol = `Udp in
-        let ip = flow.pier in
-        let port = flow.pier_port in
-        let conn_id = flow.conn_id in
-        { protocol; ip; port; conn_id }
-      in
       let is_forgotten_lost forgotten_opt =
         forgotten_opt |> Option.fold ~none:0 ~some:(fun forgotten ->
           if Option.is_none forgotten.data then 1 else 0
@@ -256,7 +251,7 @@ module Make
         let data =
           let header = Packet.T.{
             index = -1;
-            connection_id = flow.conn_id;
+            connection_id = flow.client_conn_id;
             meta = `Ack ack_index;
           } in
           Packet.to_cstructs ~header ~data:Cstruct.empty
@@ -273,17 +268,23 @@ module Make
         Log.debug (fun m -> m "feed_source: { delayed = %d; lost = %d }"
             delayed_packets lost_packets
         );
-        if flow.is_client then (
-          Log.err (fun m -> m "DEBUG: O.Connect.set_lost_packets for conn-id %s"
-              pier.conn_id);
-          O.Connect.set_lost_packets ~pier lost_packets;
-          O.Connect.set_delayed_packets ~pier delayed_packets;
-        ) else (
-          Log.err (fun m -> m "DEBUG: O.Listen.set_lost_packets for conn-id %s"
-              pier.conn_id);
-          O.Listen.set_lost_packets ~pier lost_packets;
-          O.Listen.set_delayed_packets ~pier delayed_packets;
-        );
+        begin match !(flow.conn_id) with
+          | None -> ()
+          | Some conn_id -> 
+            let pier : Types.Pier.t =
+              let protocol = `Udp in
+              let ip = flow.pier in
+              let port = flow.pier_port in
+              { protocol; ip; port; conn_id }
+            in
+            if flow.is_client then (
+              O.Connect.set_lost_packets ~pier lost_packets;
+              O.Connect.set_delayed_packets ~pier delayed_packets;
+            ) else (
+              O.Listen.set_lost_packets ~pier lost_packets;
+              O.Listen.set_delayed_packets ~pier delayed_packets;
+            )
+        end;
         Lwt_mvar.take flow.sink >>= fun ring_field ->
         begin match ring_field.meta with
           | `Ack ack_index ->
@@ -413,8 +414,8 @@ module Make
         ~port
         ~user_callback
         ~header ~data =
-      let conn_id = header.Packet.connection_id in
-      begin match Conn_map.find_opt conn_id !conn_map with
+      let client_conn_id = header.Packet.connection_id in
+      begin match Conn_map.find_opt client_conn_id !conn_map with
         | None -> 
           let packet_index = header.Packet.T.index in
           if packet_index > 0 then
@@ -429,6 +430,7 @@ module Make
               let meta = header.Packet.T.meta in
               { data; packet_index; meta }
             in
+            let conn_id = ref None in
             let sink = Lwt_mvar.create ring_field in
             let source = Lwt_stream.create_bounded bounded_stream_size in
             let writev_ctx =
@@ -445,6 +447,7 @@ module Make
                 port;
                 pier = src;
                 pier_port = src_port;
+                client_conn_id;
                 conn_id;
                 backpressure;
                 latest_written_packet_index;
@@ -459,11 +462,12 @@ module Make
               pier = src;
               pier_port = src_port;
               conn_id;
+              client_conn_id;
               backpressure;
               latest_written_packet_index;
               feeder;
             } in
-            let conn_map' = Conn_map.add conn_id flow !conn_map in
+            let conn_map' = Conn_map.add client_conn_id flow !conn_map in
             conn_map := conn_map';
             Lwt.async (fun () -> user_callback flow);
             (* user_callback flow *)
@@ -542,7 +546,8 @@ module Make
     end
 
     let create_connection ~id (pier, pier_port) =
-      let conn_id = id in
+      let client_conn_id = id in
+      let conn_id = ref (Some client_conn_id) in
       let sink = Lwt_mvar.create_empty () in
       let source = Lwt_stream.create_bounded bounded_stream_size in
       (*> goto handle that user shouldn't create a server-listening port that
@@ -561,6 +566,7 @@ module Make
           port;
           pier;
           pier_port;
+          client_conn_id;
           conn_id;
           backpressure;
           latest_written_packet_index;
@@ -575,11 +581,12 @@ module Make
         pier;
         pier_port;
         conn_id;
+        client_conn_id;
         feeder;
         backpressure;
         latest_written_packet_index;
       } in
-      let conn_map' = Conn_map.add id flow !conn_map in
+      let conn_map' = Conn_map.add client_conn_id flow !conn_map in
       conn_map := conn_map';
       listen ~port (fun _flow -> Lwt.return_unit);
       Lwt_result.return flow
@@ -590,7 +597,8 @@ module Make
       | Error (`Msg _ as msg) -> Error msg
     (*< Note: Opened polymorphic variant msg-type*)
 
-    let writev flow ~index datas =
+    let writev flow ~index ~conn_id datas =
+      flow.conn_id := Some conn_id;
       (*> Note: it's important that all cstructs are written at once for ordering*)
       let data = Cstruct.concat datas in
       let src_port = flow.port in
@@ -616,7 +624,7 @@ module Make
     let close flow =
       if flow.is_client then unlisten ~port:flow.port;
       Lwt.cancel flow.feeder;
-      let conn_map' = Conn_map.remove flow.conn_id !conn_map in
+      let conn_map' = Conn_map.remove flow.client_conn_id !conn_map in
       conn_map := conn_map';
       if flow.is_client then Udp_port.free flow.port;
       Lwt.return_unit

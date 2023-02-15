@@ -27,7 +27,9 @@ module type FLOW = sig
     id:string -> (Ipaddr.t * int) -> (t, _ error) Lwt_result.t
   
   val read : t -> (read, _ error) Lwt_result.t
-  val writev : t -> index:int -> Cstruct.t list -> (unit, _ error) Lwt_result.t
+  val writev :
+    t -> index:int -> conn_id:string -> Cstruct.t list ->
+    (unit, _ error) Lwt_result.t
   val close : t -> unit Lwt.t
 
   val dst : t -> Ipaddr.t * int
@@ -169,9 +171,10 @@ module Make
       and respond ~ctx ~protocol =
         let* header = header_of_ctx ctx |> Lwt.return in 
         let pier = pier_of_ctx ctx in
+        let conn_id = ctx.conn_id in
         let data = protocol |> Protocol_msg.to_cstruct in
         let response = Packet.to_cstructs ~header ~data in
-        let* () = Flow.writev ctx.flow response ~index:header.index in
+        let* () = Flow.writev ctx.flow response ~index:header.index ~conn_id in
         ctx.progress () >>= fun () ->
         let protocol = Some protocol in
         O.sent_packet ~pier ~header ~protocol;
@@ -183,7 +186,7 @@ module Make
         if n <= 0 then Lwt_result.return ctx else 
           let { flow; dst; dst_port; conn_id } = ctx in
           let response = Packet.to_cstructs ~header ~data in
-          let* () = Flow.writev flow response ~index:header.index in
+          let* () = Flow.writev flow response ~index:header.index ~conn_id in
           ctx.progress () >>= fun () ->
           let protocol = None in
           O.sent_packet ~pier ~header ~protocol;
@@ -378,7 +381,7 @@ module Make
         let data = Protocol_msg.to_cstruct protocol in
         let* () = 
           Packet.to_cstructs ~header ~data
-          |> Flow.writev ctx.flow ~index:header.index
+          |> Flow.writev ctx.flow ~index:header.index ~conn_id:ctx.conn_id
         in
         ctx.progress () >>= fun () ->
         let protocol = Some protocol in
@@ -389,20 +392,19 @@ module Make
         in
         Lwt_result.return ctx
       and write_n_copies ~ctx ~n ~data =
-        let connection_id = ctx.conn_id
-        in
         let rec loop ~packet_index n =
           if n <= 0 then
             Lwt_result.return packet_index
           else 
             let header = Packet.T.{
               index = packet_index;
-              connection_id;
+              connection_id = ctx.conn_id;
               meta = `Normal;
             }
             in
+            let conn_id = ctx.conn_id in
             let data = Packet.to_cstructs ~header ~data in
-            let* () = Flow.writev ctx.flow data ~index:header.index in
+            let* () = Flow.writev ctx.flow data ~index:header.index ~conn_id in
             ctx.progress () >>= fun () ->
             let protocol = None in
             O.sent_packet ~pier ~header ~protocol;
