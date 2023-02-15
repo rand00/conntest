@@ -171,7 +171,7 @@ module Make
       port : int;
       pier : Ipaddr.t;
       pier_port : int;
-      client_conn_id : string;
+      conn_id_client : string;
       conn_id : string option ref;
       backpressure : unit stream;
       latest_written_packet_index : int ref;
@@ -186,7 +186,7 @@ module Make
       port : int;
       pier : Ipaddr.t;
       pier_port : int;
-      client_conn_id : string;
+      conn_id_client : string;
       conn_id : string option ref;
       (*< Note: passed via `writev` (for server) as it's needed for passing
           stats to Output module*)
@@ -251,7 +251,8 @@ module Make
         let data =
           let header = Packet.T.{
             index = -1;
-            connection_id = flow.client_conn_id;
+            (*> Note that conntest protocol uses conn_id_client for all packets*)
+            connection_id = flow.conn_id_client;
             meta = `Ack ack_index;
           } in
           Packet.to_cstructs ~header ~data:Cstruct.empty
@@ -414,8 +415,8 @@ module Make
         ~port
         ~user_callback
         ~header ~data =
-      let client_conn_id = header.Packet.connection_id in
-      begin match Conn_map.find_opt client_conn_id !conn_map with
+      let conn_id_client = header.Packet.connection_id in
+      begin match Conn_map.find_opt conn_id_client !conn_map with
         | None -> 
           let packet_index = header.Packet.T.index in
           if packet_index > 0 then
@@ -447,7 +448,7 @@ module Make
                 port;
                 pier = src;
                 pier_port = src_port;
-                client_conn_id;
+                conn_id_client;
                 conn_id;
                 backpressure;
                 latest_written_packet_index;
@@ -462,12 +463,12 @@ module Make
               pier = src;
               pier_port = src_port;
               conn_id;
-              client_conn_id;
+              conn_id_client;
               backpressure;
               latest_written_packet_index;
               feeder;
             } in
-            let conn_map' = Conn_map.add client_conn_id flow !conn_map in
+            let conn_map' = Conn_map.add conn_id_client flow !conn_map in
             conn_map := conn_map';
             Lwt.async (fun () -> user_callback flow);
             (* user_callback flow *)
@@ -546,8 +547,8 @@ module Make
     end
 
     let create_connection ~id (pier, pier_port) =
-      let client_conn_id = id in
-      let conn_id = ref (Some client_conn_id) in
+      let conn_id_client = id in
+      let conn_id = ref (Some conn_id_client) in
       let sink = Lwt_mvar.create_empty () in
       let source = Lwt_stream.create_bounded bounded_stream_size in
       (*> goto handle that user shouldn't create a server-listening port that
@@ -566,7 +567,7 @@ module Make
           port;
           pier;
           pier_port;
-          client_conn_id;
+          conn_id_client;
           conn_id;
           backpressure;
           latest_written_packet_index;
@@ -581,12 +582,14 @@ module Make
         pier;
         pier_port;
         conn_id;
-        client_conn_id;
+        conn_id_client;
         feeder;
         backpressure;
         latest_written_packet_index;
       } in
-      let conn_map' = Conn_map.add client_conn_id flow !conn_map in
+      (*> Note that the conntest protocol uses clients conn-id for all
+          packet headers*)
+      let conn_map' = Conn_map.add conn_id_client flow !conn_map in
       conn_map := conn_map';
       listen ~port (fun _flow -> Lwt.return_unit);
       Lwt_result.return flow
@@ -624,7 +627,7 @@ module Make
     let close flow =
       if flow.is_client then unlisten ~port:flow.port;
       Lwt.cancel flow.feeder;
-      let conn_map' = Conn_map.remove flow.client_conn_id !conn_map in
+      let conn_map' = Conn_map.remove flow.conn_id_client !conn_map in
       conn_map := conn_map';
       if flow.is_client then Udp_port.free flow.port;
       Lwt.return_unit

@@ -158,7 +158,6 @@ module Make
         | `Latency `Ping ->
           let protocol = Some protocol in
           O.received_packet ~pier ~header ~protocol;
-          let header = packet.header in
           let protocol = `Latency `Pong in
           let* ctx = respond ~ctx ~protocol in
           let* packet, more_data = read_packet ~ctx ?more_data () in
