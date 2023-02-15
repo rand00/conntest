@@ -347,6 +347,13 @@ module Notty_ui
 
     module Listen = struct
 
+      type sampled_event = [
+        | `Set_lost_packets of (Pier.t * int)
+        | `Set_delayed_packets of (Pier.t * int)
+      ]
+
+      let (sampled_e : sampled_event E.t), sampled_eupd = E.create ()
+        
       (*goto can share most with Connect*)
       type event = [
         | `New_connection of Pier.t
@@ -354,11 +361,14 @@ module Notty_ui
         | `Error of (Pier.t * string)
         | `Recv_packet of (Pier.t * Protocol_msg.t option)
         | `Sent_packet of (Pier.t * Protocol_msg.t option)
-        | `Set_lost_packets of (Pier.t * int)
-        | `Set_delayed_packets of (Pier.t * int)
       ]
 
       let (e : event E.t), eupd = E.create ()
+
+      type all_events = [
+        | sampled_event
+        | event
+      ]
 
       let new_connection ~pier =
         eupd @@ `New_connection pier
@@ -379,15 +389,22 @@ module Notty_ui
         eupd @@ `Sent_packet (pier, protocol)
 
       let set_lost_packets ~pier n =
-        eupd @@ `Set_lost_packets (pier, n)
+        sampled_eupd @@ `Set_lost_packets (pier, n)
         
       let set_delayed_packets ~pier n =
-        eupd @@ `Set_delayed_packets (pier, n)
+        sampled_eupd @@ `Set_delayed_packets (pier, n)
 
     end
 
     module Connect = struct
 
+      type sampled_event = [
+        | `Set_lost_packets of (Pier.t * int)
+        | `Set_delayed_packets of (Pier.t * int)
+      ]
+
+      let (sampled_e : sampled_event E.t), sampled_eupd = E.create ()
+        
       (*goto make (sub)type common for server/client?*)
       type event = [
         | `New_connection of Pier.t
@@ -395,8 +412,11 @@ module Notty_ui
         (* | `Error of (Pier.t * string) *)
         | `Recv_packet of (Pier.t * Protocol_msg.t option)
         | `Sent_packet of (Pier.t * Protocol_msg.t option)
-        | `Set_lost_packets of (Pier.t * int)
-        | `Set_delayed_packets of (Pier.t * int)
+      ]
+
+      type all_events = [
+        | sampled_event
+        | event
       ]
 
       let (e : event E.t), eupd = E.create ()
@@ -429,10 +449,10 @@ module Notty_ui
         () (*goto*)
 
       let set_lost_packets ~pier n =
-        eupd @@ `Set_lost_packets (pier, n)
+        sampled_eupd @@ `Set_lost_packets (pier, n)
         
       let set_delayed_packets ~pier n =
-        eupd @@ `Set_delayed_packets (pier, n)
+        sampled_eupd @@ `Set_delayed_packets (pier, n)
 
     end
 
@@ -619,12 +639,26 @@ module Notty_ui
 
       let connections_e =
         let typ = `Server in
+        let sampled_input_e =
+          Input_event.Listen.sampled_e
+          |> E.map Option.some
+          |> S.hold None
+          |> S.sample (fun _ e -> e) Tick.e
+          |> E.fmap Fun.id
+        in
+        let sampling_e = E.select Input_event.[
+          input_e
+          |> E.map (fun v -> (v : Listen.event :> Listen.all_events));
+          sampled_input_e
+          |> E.map (fun v -> (v : Listen.sampled_event :> Listen.all_events));
+        ]
+        in
         let sampled_s =
           S.l2 ~eq:Eq.never Tuple.mk2
             latencies_s
             bandwidths_s
         in
-        S.sample Tuple.mk2 input_e sampled_s
+        S.sample Tuple.mk2 sampling_e sampled_s
         |> E.fold (Calc.connection_state ~typ) Conn_id_map.empty
 
       let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
@@ -672,12 +706,26 @@ module Notty_ui
 
       let connections_e =
         let typ = `Client in
+        let sampled_input_e =
+          Input_event.Connect.sampled_e
+          |> E.map Option.some
+          |> S.hold None
+          |> S.sample (fun _ e -> e) Tick.e
+          |> E.fmap Fun.id
+        in
+        let sampling_e = E.select Input_event.[
+          input_e
+          |> E.map (fun v -> (v : Connect.event :> Connect.all_events));
+          sampled_input_e
+          |> E.map (fun v -> (v : Connect.sampled_event :> Connect.all_events));
+        ]
+        in
         let sampled_s =
           S.l2 ~eq:Eq.never Tuple.mk2
             latencies_s
             bandwidths_s
         in
-        S.sample Tuple.mk2 input_e sampled_s
+        S.sample Tuple.mk2 sampling_e sampled_s
         |> E.fold (Calc.connection_state ~typ) Conn_id_map.empty
 
       let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
