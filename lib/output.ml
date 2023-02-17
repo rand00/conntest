@@ -255,8 +255,10 @@ module Connection = struct
 
     type id = Uuidm.t
 
+    type side = [ `Client | `Server ]
+
     type t = {
-      typ : [ `Client | `Server ];
+      side : side;
       pier : Pier.t;
       pier_name : string option;
       protocol : protocol;
@@ -275,8 +277,8 @@ module Connection = struct
   end
   include T
 
-  let make ~typ ~protocol ~start_time ~pier = {
-    typ;
+  let make ~side ~protocol ~start_time ~pier = {
+    side;
     protocol;
     start_time;
     pier;
@@ -342,151 +344,6 @@ module Notty_ui
   (* let (term_dimensions_s : (int * int) S.t), term_dimensions_supd =
    *   S.create Args.term_dimensions *)
 
-  (*goto maybe put S on via mli*)
-  module Input_event (* : S *) = struct
-
-    module Listen = struct
-
-      type sampled_event = [
-        | `Set_lost_packets of (Pier.t * int)
-        | `Set_delayed_packets of (Pier.t * int)
-      ]
-
-      let (sampled_e : sampled_event E.t), sampled_eupd = E.create ()
-        
-      (*goto can share most with Connect*)
-      type event = [
-        | `New_connection of Pier.t
-        | `Closing_connection of Pier.t
-        | `Error of (Pier.t * string)
-        | `Recv_packet of (Pier.t * Protocol_msg.t option)
-        | `Sent_packet of (Pier.t * Protocol_msg.t option)
-      ]
-
-      type all_events = [
-        | sampled_event
-        | event
-      ]
-
-      let (e : all_events E.t), eupd = E.create ()
-
-      let sample_at_tick extract = 
-        sampled_e
-        |> E.fmap extract
-        |> E.map Option.some
-        |> S.hold None
-        |> S.sample (fun _ e -> e) Tick.e
-        |> E.fmap Fun.id
-
-      let e : all_events E.t =
-        let lost_packets_sampled_e =
-          let extract = function
-            | `Set_lost_packets _ as v -> Some v
-            | _ -> None
-          in
-          sample_at_tick extract
-        in
-        let delayed_packets_sampled_e =
-          let extract = function
-            | `Set_delayed_packets _ as v -> Some v
-            | _ -> None
-          in
-          sample_at_tick extract
-        in
-        E.select [
-          e;
-          lost_packets_sampled_e;
-          delayed_packets_sampled_e;
-        ]
-
-      let new_connection ~pier =
-        eupd @@ `New_connection pier
-
-      let closing_connection ~pier =
-        eupd @@ `Closing_connection pier
-
-      let error ~pier ~err =
-        eupd @@ `Error (pier, (err : string))
-
-      let registered_listener ~proto ~port = () 
-
-      (*> Note: there is also a remote conn-id in header*)
-      let received_packet ~pier ~header ~protocol =
-        eupd @@ `Recv_packet (pier, protocol)
-
-      let sent_packet ~pier ~header ~protocol =
-        eupd @@ `Sent_packet (pier, protocol)
-
-      let set_lost_packets ~pier n =
-        sampled_eupd @@ `Set_lost_packets (pier, n)
-        
-      let set_delayed_packets ~pier n =
-        sampled_eupd @@ `Set_delayed_packets (pier, n)
-
-    end
-
-    module Connect = struct
-
-      type sampled_event = [
-        | `Set_lost_packets of (Pier.t * int)
-        | `Set_delayed_packets of (Pier.t * int)
-      ]
-
-      let (sampled_e : sampled_event E.t), sampled_eupd = E.create ()
-        
-      (*goto make (sub)type common for server/client?*)
-      type event = [
-        | `New_connection of Pier.t
-        | `Closing_connection of Pier.t
-        (* | `Error of (Pier.t * string) *)
-        | `Recv_packet of (Pier.t * Protocol_msg.t option)
-        | `Sent_packet of (Pier.t * Protocol_msg.t option)
-      ]
-
-      type all_events = [
-        | sampled_event
-        | event
-      ]
-
-      let (e : event E.t), eupd = E.create ()
-
-      let connecting ~pier =
-        () (*goto*)
-
-      let connected ~pier =
-        eupd @@ `New_connection pier
-
-      let writing ~pier ~data =
-        () (*goto*)
-
-      let error_connection ~pier ~err =
-        () (*goto*)
-
-      let error ~pier ~err =
-        () (*goto*)
-
-      let received_packet ~pier ~header ~protocol  = 
-        eupd @@ `Recv_packet (pier, protocol)
-
-      let sent_packet ~pier ~header ~protocol = 
-        eupd @@ `Sent_packet (pier, protocol)
-
-      let closing_flow ~pier =
-        eupd @@ `Closing_connection pier
-
-      let closed_flow ~pier =
-        () (*goto*)
-
-      let set_lost_packets ~pier n =
-        sampled_eupd @@ `Set_lost_packets (pier, n)
-        
-      let set_delayed_packets ~pier n =
-        sampled_eupd @@ `Set_delayed_packets (pier, n)
-
-    end
-
-  end
-
   module Data = struct
 
     type latency_data = {
@@ -531,7 +388,7 @@ module Notty_ui
               let latency_snapshot = Some half_roundtrip_ns in
               Some { data with latency_snapshot } 
           ) acc
-      
+
       (*> goto should maybe remove state when connection closes*)
       let bandwidth acc event =
         let elapsed_ns = Clock.elapsed_ns () in
@@ -560,13 +417,13 @@ module Notty_ui
               Some { data with i; bandwidth_snapshot } 
           ) acc
 
-      let connection_state ~typ acc (event, (latencies, bandwidths)) =
+      let connection_state ~side acc (event, (latencies, bandwidths)) =
         let elapsed_ns = Clock.elapsed_ns () in
         match event with
         | `New_connection pier ->
           let start_time = elapsed_ns in
           let protocol = pier.Pier.protocol in
-          let conn = Connection.make ~typ ~protocol ~start_time ~pier in
+          let conn = Connection.make ~side ~protocol ~start_time ~pier in
           acc |> Conn_id_map.add pier.conn_id conn
         | `Closing_connection pier ->
           Conn_id_map.remove pier.conn_id acc
@@ -626,129 +483,188 @@ module Notty_ui
           ) acc
 
     end
-    
-    module Tcp_server = struct
 
-      let input_e = Input_event.Listen.e
-
-      let latencies_e =
-        let open Protocol_msg.T in
-        let input_e =
-          input_e
-          |> E.fmap (function
-            | `Sent_packet (pier, Some (`Latency `Pong)) ->
-              Some (pier, `Roundtrip_start)
-            | `Recv_packet (pier, Some (`Latency `Pong)) ->
-              Some (pier, `Roundtrip_end)
-            | _ -> None
-          )
-        in
-        input_e
-        |> E.fold Calc.latency Conn_id_map.empty
-
-      let latencies_s = S.hold ~eq:Eq.never Conn_id_map.empty latencies_e
-
-      let bandwidths_e =
-        let open Protocol_msg.T in
-        let input_e =
-          input_e
-          |> E.fmap (function
-            | `Recv_packet (pier, Some (`Bandwidth (
-              { direction = `Up; _} as b))) ->
-              Some (`Init (pier, b.packet_size))
-            | `Recv_packet (pier, None) ->
-              Some (`Packet pier)
-            | _ -> None
-          )
-        in
-        input_e
-        |> E.fold Calc.bandwidth Conn_id_map.empty
-
-      let bandwidths_s = S.hold ~eq:Eq.never Conn_id_map.empty bandwidths_e
-
-      let connections_e =
-        let typ = `Server in
-        let sampled_s =
-          S.l2 ~eq:Eq.never Tuple.mk2
-            latencies_s
-            bandwidths_s
-        in
-        S.sample Tuple.mk2 input_e sampled_s
-        |> E.fold (Calc.connection_state ~typ) Conn_id_map.empty
-
-      let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
-
-    end
-
-    module Tcp_client = struct
-
-      let input_e = Input_event.Connect.e 
-      
-      let latencies_e =
-        let open Protocol_msg.T in
-        let input_e =
-          input_e
-          |> E.fmap (function
-            | `Sent_packet (pier, Some (`Latency `Ping)) ->
-              Some (pier, `Roundtrip_start)
-            | `Recv_packet (pier, Some (`Latency `Pong)) ->
-              Some (pier, `Roundtrip_end)
-            | _ -> None
-          )
-        in
-        input_e 
-        |> E.fold Calc.latency Conn_id_map.empty
-
-      let latencies_s = S.hold ~eq:Eq.never Conn_id_map.empty latencies_e
-
-      let bandwidths_e =
-        let open Protocol_msg.T in
-        let input_e =
-          input_e
-          |> E.fmap (function
-            | `Sent_packet (pier, Some (`Bandwidth (
-              {direction = `Down; _} as b))) ->
-              Some (`Init (pier, b.packet_size))
-            | `Recv_packet (pier, None) ->
-              Some (`Packet pier)
-            | _ -> None
-          )
-        in
-        input_e
-        |> E.fold Calc.bandwidth Conn_id_map.empty
-
-      let bandwidths_s = S.hold ~eq:Eq.never Conn_id_map.empty bandwidths_e
-
-      let connections_e =
-        let typ = `Client in
-        let sampled_input_e =
-          Input_event.Connect.sampled_e
-          |> E.map Option.some
-          |> S.hold None
-          |> S.sample (fun _ e -> e) Tick.e
-          |> E.fmap Fun.id
-        in
-        let sampling_e = E.select Input_event.[
-          input_e
-          |> E.map (fun v -> (v : Connect.event :> Connect.all_events));
-          sampled_input_e
-          |> E.map (fun v -> (v : Connect.sampled_event :> Connect.all_events));
-        ]
-        in
-        let sampled_s =
-          S.l2 ~eq:Eq.never Tuple.mk2
-            latencies_s
-            bandwidths_s
-        in
-        S.sample Tuple.mk2 sampling_e sampled_s
-        |> E.fold (Calc.connection_state ~typ) Conn_id_map.empty
-
-      let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
-
-    end
-        
   end
-  
+
+  module type SIDE = sig
+    val v : Connection.T.side
+  end
+
+  (*> Note: side = server/client-side*)
+  module Make_side (Side : SIDE) = struct
+
+    type sampled_event = [
+      | `Set_lost_packets of (Pier.t * int)
+      | `Set_delayed_packets of (Pier.t * int)
+    ]
+
+    let (sampled_e : sampled_event E.t), sampled_eupd = E.create ()
+
+    type event = [
+      | `New_connection of Pier.t
+      | `Closing_connection of Pier.t
+      | `Error of (Pier.t * string)
+      | `Recv_packet of (Pier.t * Protocol_msg.t option)
+      | `Sent_packet of (Pier.t * Protocol_msg.t option)
+    ]
+
+    type all_events = [
+      | sampled_event
+      | event
+    ]
+
+    let (e : all_events E.t), eupd = E.create ()
+
+    let sample_at_tick extract = 
+      sampled_e
+      |> E.fmap extract
+      |> E.map Option.some
+      |> S.hold None
+      |> S.sample (fun _ e -> e) Tick.e
+      |> E.fmap Fun.id
+
+    let e : all_events E.t =
+      let lost_packets_sampled_e =
+        let extract = function
+          | `Set_lost_packets _ as v -> Some v
+          | _ -> None
+        in
+        sample_at_tick extract
+      in
+      let delayed_packets_sampled_e =
+        let extract = function
+          | `Set_delayed_packets _ as v -> Some v
+          | _ -> None
+        in
+        sample_at_tick extract
+      in
+      E.select [
+        e;
+        lost_packets_sampled_e;
+        delayed_packets_sampled_e;
+      ]
+
+    let latencies_e =
+      let open Protocol_msg.T in
+      let input_e =
+        e |> E.fmap (function
+          | `Sent_packet (pier, Some (`Latency `Pong)) ->
+            Some (pier, `Roundtrip_start)
+          | `Recv_packet (pier, Some (`Latency `Pong)) ->
+            Some (pier, `Roundtrip_end)
+          | _ -> None
+        )
+      in
+      input_e
+      |> E.fold Data.Calc.latency Conn_id_map.empty
+
+    let latencies_s = S.hold ~eq:Eq.never Conn_id_map.empty latencies_e
+
+    let bandwidths_e =
+      let open Protocol_msg.T in
+      let input_e =
+        e |> E.fmap (function
+          | `Recv_packet (pier, Some (`Bandwidth (
+            { direction = `Up; _} as b))) ->
+            Some (`Init (pier, b.packet_size))
+          | `Recv_packet (pier, None) ->
+            Some (`Packet pier)
+          | _ -> None
+        )
+      in
+      input_e
+      |> E.fold Data.Calc.bandwidth Conn_id_map.empty
+
+    let bandwidths_s = S.hold ~eq:Eq.never Conn_id_map.empty bandwidths_e
+
+    let connections_e =
+      let side = Side.v in
+      let sampled_s =
+        S.l2 ~eq:Eq.never Tuple.mk2
+          latencies_s
+          bandwidths_s
+      in
+      S.sample Tuple.mk2 e sampled_s
+      |> E.fold (Data.Calc.connection_state ~side) Conn_id_map.empty
+
+    let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
+
+  end
+
+  (*goto maybe put S on via mli*)
+  module Input_event (* : S *) = struct
+
+    module Listen = struct
+
+      module Frp = Make_side (struct let v = `Server end)
+
+      let new_connection ~pier =
+        Frp.eupd @@ `New_connection pier
+
+      let closing_connection ~pier =
+        Frp.eupd @@ `Closing_connection pier
+
+      let error ~pier ~err =
+        Frp.eupd @@ `Error (pier, (err : string))
+
+      let registered_listener ~proto ~port = () 
+
+      (*> Note: there is also a remote conn-id in header*)
+      let received_packet ~pier ~header ~protocol =
+        Frp.eupd @@ `Recv_packet (pier, protocol)
+
+      let sent_packet ~pier ~header ~protocol =
+        Frp.eupd @@ `Sent_packet (pier, protocol)
+
+      let set_lost_packets ~pier n =
+        Frp.sampled_eupd @@ `Set_lost_packets (pier, n)
+        
+      let set_delayed_packets ~pier n =
+        Frp.sampled_eupd @@ `Set_delayed_packets (pier, n)
+
+    end
+
+    module Connect = struct
+
+      module Frp = Make_side (struct let v = `Client end)
+
+      let connecting ~pier =
+        () (*goto*)
+
+      let connected ~pier =
+        Frp.eupd @@ `New_connection pier
+
+      let writing ~pier ~data =
+        () (*goto*)
+
+      let error_connection ~pier ~err =
+        () (*goto*)
+
+      let error ~pier ~err =
+        () (*goto*)
+
+      let received_packet ~pier ~header ~protocol  = 
+        Frp.eupd @@ `Recv_packet (pier, protocol)
+
+      let sent_packet ~pier ~header ~protocol = 
+        Frp.eupd @@ `Sent_packet (pier, protocol)
+
+      let closing_flow ~pier =
+        Frp.eupd @@ `Closing_connection pier
+
+      let closed_flow ~pier =
+        () (*goto*)
+
+      let set_lost_packets ~pier n =
+        Frp.sampled_eupd @@ `Set_lost_packets (pier, n)
+        
+      let set_delayed_packets ~pier n =
+        Frp.sampled_eupd @@ `Set_delayed_packets (pier, n)
+
+    end
+
+  end
+
   module Render = struct 
 
     open Notty 
@@ -955,8 +871,8 @@ module Notty_ui
             Tick.s
             name_s
             emph_attr_s
-            Data.Tcp_server.connections_s
-            Data.Tcp_client.connections_s
+            Input_event.Listen.Frp.connections_s
+            Input_event.Connect.Frp.connections_s
           |> S.map ~eq:Eq.never render_connections
         in
         let s' = s |> S.map (fun (v, _, _) -> v) in
