@@ -486,11 +486,11 @@ module Notty_ui
 
   end
 
+  (*> Note: side = server/client-side*)
   module type SIDE = sig
     val v : Connection.T.side
   end
 
-  (*> Note: side = server/client-side*)
   module Make_side (Side : SIDE) = struct
 
     type sampled_event = [
@@ -547,13 +547,23 @@ module Notty_ui
     let latencies_e =
       let open Protocol_msg.T in
       let input_e =
-        e |> E.fmap (function
-          | `Sent_packet (pier, Some (`Latency `Pong)) ->
-            Some (pier, `Roundtrip_start)
-          | `Recv_packet (pier, Some (`Latency `Pong)) ->
-            Some (pier, `Roundtrip_end)
-          | _ -> None
-        )
+        match Side.v with
+        | `Client -> 
+          e |> E.fmap (function
+            | `Sent_packet (pier, Some (`Latency `Ping)) ->
+              Some (pier, `Roundtrip_start)
+            | `Recv_packet (pier, Some (`Latency `Pong)) ->
+              Some (pier, `Roundtrip_end)
+            | _ -> None
+          )
+        | `Server -> 
+          e |> E.fmap (function
+            | `Sent_packet (pier, Some (`Latency `Pong)) ->
+              Some (pier, `Roundtrip_start)
+            | `Recv_packet (pier, Some (`Latency `Pong)) ->
+              Some (pier, `Roundtrip_end)
+            | _ -> None
+          )
       in
       input_e
       |> E.fold Data.Calc.latency Conn_id_map.empty
@@ -563,14 +573,25 @@ module Notty_ui
     let bandwidths_e =
       let open Protocol_msg.T in
       let input_e =
-        e |> E.fmap (function
-          | `Recv_packet (pier, Some (`Bandwidth (
-            { direction = `Up; _} as b))) ->
-            Some (`Init (pier, b.packet_size))
-          | `Recv_packet (pier, None) ->
-            Some (`Packet pier)
-          | _ -> None
-        )
+        match Side.v with
+        | `Client ->
+          e |> E.fmap (function
+            | `Sent_packet (pier, Some (`Bandwidth (
+              {direction = `Down; _} as b))) ->
+              Some (`Init (pier, b.packet_size))
+            | `Recv_packet (pier, None) ->
+              Some (`Packet pier)
+            | _ -> None
+          )
+        | `Server -> 
+          e |> E.fmap (function
+            | `Recv_packet (pier, Some (`Bandwidth (
+              { direction = `Up; _} as b))) ->
+              Some (`Init (pier, b.packet_size))
+            | `Recv_packet (pier, None) ->
+              Some (`Packet pier)
+            | _ -> None
+          )
       in
       input_e
       |> E.fold Data.Calc.bandwidth Conn_id_map.empty
