@@ -427,7 +427,7 @@ module Notty_ui
            (latencies, bandwidths, sampled_events)) =
         let elapsed_ns = Clock.elapsed_ns () in
         match event with
-        | `Tick _ -> (*goto could do this less frequently by looking at tick*)
+        | `Tick _ -> (*gomaybe could do this less frequently by looking at tick*)
           Conn_id_map.mapi (fun conn_id conn -> 
             let conn =
               match Conn_id_map.find_opt conn_id latencies with
