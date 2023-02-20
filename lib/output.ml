@@ -898,10 +898,20 @@ module Notty_ui
             Input_event.Connect.Frp.connections_s
           |> S.map ~eq:Eq.never render_connections
         in
-        let s' = s |> S.map (fun (v, _, _) -> v) in
+        (*> Note: saved some performance on avoiding calling I.equal
+          .. though I.equal is also faster than polymorphic equal
+        *)
+        (* let s' = s |> S.map ~eq:I.equal (fun (v, _, _) -> v) in *)
+        let s' =
+          S.sample (fun _ (image, _, _) -> image) Tick.e s
+          |> S.hold ~eq:Eq.never I.empty
+        in
         s, s'
       in
-      S.fix (I.empty, 0 (*tick*), 0(*width*)) define
+      let eq (image, x, y) (image', x', y') =
+        Int.equal x x' && Int.equal y y' && I.equal image image'
+      in
+      S.fix ~eq (I.empty, 0 (*tick*), 0(*width*)) define
 
     let image_e =
       image_s |> S.changes
