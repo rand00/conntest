@@ -345,6 +345,11 @@ module Make
                 *)
                 Log.debug (fun m -> m "feed_source: packet_index_diff < 0");
                 let did_set = ref false in
+                (*> goto perf; could use something like 'find_map_rev'
+                  * which would try the latest packets first -
+                    * which should be more often hit
+                  * which would exit looping over ring when found
+                *)
                 let ring = ring |> Ring.map (fun ring_field' ->
                   if ring_field'.packet_index = ring_field.packet_index then (
                     did_set := true;
@@ -362,7 +367,7 @@ module Make
                   Log.debug (fun m -> m "feed_source: packet_index_diff > 0 (%d)"
                       packet_index_diff
                   );
-                let ring, lost_packets_now =
+                let ring, lost_packets_now = 
                   push_until_packet ~ring ~ring_field ~packet_index_diff in
                 let delayed_packets = delayed_packets + packet_index_diff in
                 ring, delayed_packets, lost_packets + lost_packets_now
@@ -371,6 +376,13 @@ module Make
                 *)
               )
             in
+            (*> goto perf:
+              * is it possible to start iterating from index in ring that is after
+                last_feeded_packet_index?
+                * @idea; could save position in ring of last_feeded_packet_index
+              * should make a new Ring function that lets one shortcircuit when
+                condition is met 
+            *)
             ring |> Ring.fold_left (fun acc ring_field' ->
               acc >>= fun (last_feeded_packet_index, seen_empty_data) ->
               let seen_empty_data = seen_empty_data || ring_field'.data = None in
@@ -560,6 +572,7 @@ module Make
       let latest_written_packet_index = ref 0 in
       let is_client = true in
       let feeder =
+        (*goto could make a type that wraps flow and contains 'feeder' instead*)
         let partial_flow = {
           is_client;
           sink;
