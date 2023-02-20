@@ -142,7 +142,8 @@ module Make
 
     (*> Note: these values work @ localhost with both unix + mirage stack
         (after recent fixes) *)
-    let ack_receiver_bound = 6
+    (* let ack_receiver_bound = 6 *)
+    let ack_receiver_bound = 12
     let ack_sender_bound = ack_receiver_bound + 4
     let ring_size = ack_sender_bound + 5
     let bounded_stream_size = ring_size * 2
