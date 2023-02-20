@@ -318,7 +318,7 @@ module Notty_ui
 
   module Tick = struct
 
-    let fps = 60. 
+    let fps = 60.
     let fps_sleep_ns = 1e9 /. fps 
 
     let e, eupd = E.create ()
@@ -887,6 +887,17 @@ module Notty_ui
         image, tick, max_conn_width
     
     let image_s =
+      let init_v = I.empty, 0, 0 in
+      let downsampled_server_connections_s =
+        Input_event.Listen.Frp.connections_s
+        |> S.sample (fun _ v -> v) Tick.e
+        |> S.hold ~eq:Eq.never Conn_id_map.empty
+      in
+      let downsampled_client_connections_s =
+        Input_event.Connect.Frp.connections_s
+        |> S.sample (fun _ v -> v) Tick.e
+        |> S.hold ~eq:Eq.never Conn_id_map.empty
+      in
       let define prev_s = 
         let s =
           S.l6 ~eq:Eq.never Tuple.mk6
@@ -894,24 +905,17 @@ module Notty_ui
             Tick.s
             name_s
             emph_attr_s
-            Input_event.Listen.Frp.connections_s
-            Input_event.Connect.Frp.connections_s
+            downsampled_server_connections_s
+            downsampled_client_connections_s
           |> S.map ~eq:Eq.never render_connections
         in
-        (*> Note: saved some performance on avoiding calling I.equal
-          .. though I.equal is also faster than polymorphic equal
-        *)
-        (* let s' = s |> S.map ~eq:I.equal (fun (v, _, _) -> v) in *)
-        let s' =
-          S.sample (fun _ (image, _, _) -> image) Tick.e s
-          |> S.hold ~eq:Eq.never I.empty
-        in
+        let s' = s |> S.map ~eq:I.equal (fun (image, _, _) -> image) in
         s, s'
       in
       let eq (image, x, y) (image', x', y') =
         Int.equal x x' && Int.equal y y' && I.equal image image'
       in
-      S.fix ~eq (I.empty, 0 (*tick*), 0(*width*)) define
+      S.fix ~eq init_v define
 
     let image_e =
       image_s |> S.changes
