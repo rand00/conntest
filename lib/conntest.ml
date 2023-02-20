@@ -144,7 +144,7 @@ module Make
         (after recent fixes) *)
     (* let ack_receiver_bound = 6 *)
     let ack_receiver_bound = 20
-    let ack_sender_bound = ack_receiver_bound + 4
+    let ack_sender_bound = ack_receiver_bound + 16
     let ring_size = ack_sender_bound + 5
     let bounded_stream_size = ring_size * 2
     (*< Note: just set this to some value where upper and lower protocol can run at slightly
