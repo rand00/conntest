@@ -323,7 +323,7 @@ module Notty_ui
 
     let e, eupd = E.create ()
 
-    let s = S.hold 0 e
+    let s = S.hold ~eq:Eq.never 0 e
 
     let loop_feed () =
       let rec aux i =
@@ -356,6 +356,11 @@ module Notty_ui
       packet_size : int;
       bandwidth_snapshot : float option; (*MB/sec*)
       i : int;
+    }
+
+    type sampled_latest = {
+      lost_packets : int;
+      delayed_packets : int;
     }
 
     let sec_of_ns ns = Int64.to_float ns /. 1e9
@@ -417,70 +422,75 @@ module Notty_ui
               Some { data with i; bandwidth_snapshot } 
           ) acc
 
-      let connection_state ~side acc (event, (latencies, bandwidths)) =
+      let connection_state ~side acc
+          (event,
+           (latencies, bandwidths, sampled_events)) =
         let elapsed_ns = Clock.elapsed_ns () in
         match event with
-        | `New_connection pier ->
-          let start_time = elapsed_ns in
-          let protocol = pier.Pier.protocol in
-          let conn = Connection.make ~side ~protocol ~start_time ~pier in
-          acc |> Conn_id_map.add pier.conn_id conn
-        | `Closing_connection pier ->
-          Conn_id_map.remove pier.conn_id acc
-        | `Error (pier, _err) ->
-          Conn_id_map.update pier.conn_id (function
-            | None -> None
-            | Some conn -> Some { conn with error = true }
+        | `Tick _ -> (*goto could do this less frequently by looking at tick*)
+          Conn_id_map.mapi (fun conn_id conn -> 
+            let conn =
+              match Conn_id_map.find_opt conn_id latencies with
+              | None -> conn
+              | Some latency_data ->
+                let latency = latency_data.latency_snapshot in
+                { conn with latency } 
+            in
+            let conn =
+              match Conn_id_map.find_opt conn_id bandwidths with
+              | None -> conn
+              | Some bwm_data ->
+                let packet_size = Some bwm_data.packet_size in
+                let bandwidth = bwm_data.bandwidth_snapshot
+                in
+                { conn with packet_size; bandwidth }
+            in
+            let conn =
+              match Conn_id_map.find_opt conn_id sampled_events with
+              | None -> conn
+              | Some (sampled_v:sampled_latest) ->
+                let lost_packets = Some sampled_v.lost_packets in
+                let delayed_packets = Some sampled_v.delayed_packets in
+                { conn with lost_packets; delayed_packets }
+            in
+            conn
           ) acc
-        | `Recv_packet (pier, protocol) ->
-          Conn_id_map.update pier.conn_id (function
-            | None -> None (*shouldn't happen*)
-            | Some conn ->
-              let received_packets = succ conn.received_packets in
-              let conn = { conn with received_packets } in
-              let conn = match protocol with
-                | Some (`Hello info) ->
-                  let pier_name = Some info.Protocol_msg.T.name in
-                  { conn with pier_name }
-                | _ -> conn
-              in
-              (*> goto optimization: could avoid these updates on general packets,
-                  .. and only on certain events instead*)
-              let conn =
-                match Conn_id_map.find_opt pier.conn_id latencies with
-                | None -> conn
-                | Some latency_data ->
-                  let latency = latency_data.latency_snapshot in
-                  { conn with latency } 
-              in
-              let conn =
-                match Conn_id_map.find_opt pier.conn_id bandwidths with
-                | None -> conn
-                | Some bwm_data ->
-                  let packet_size = Some bwm_data.packet_size in
-                  let bandwidth = bwm_data.bandwidth_snapshot
+        | `Event event ->
+          begin match event with 
+            | `New_connection pier ->
+              let start_time = elapsed_ns in
+              let protocol = pier.Pier.protocol in
+              let conn = Connection.make ~side ~protocol ~start_time ~pier in
+              acc |> Conn_id_map.add pier.conn_id conn
+            | `Closing_connection pier ->
+              Conn_id_map.remove pier.conn_id acc
+            | `Error (pier, _err) ->
+              Conn_id_map.update pier.conn_id (function
+                | None -> None
+                | Some conn -> Some { conn with error = true }
+              ) acc
+            | `Recv_packet (pier, protocol) ->
+              Conn_id_map.update pier.conn_id (function
+                | None -> None (*shouldn't happen*)
+                | Some conn ->
+                  let received_packets = succ conn.received_packets in
+                  let conn = { conn with received_packets } in
+                  let conn = match protocol with
+                    | Some (`Hello info) ->
+                      let pier_name = Some info.Protocol_msg.T.name in
+                      { conn with pier_name }
+                    | _ -> conn
                   in
-                  { conn with packet_size; bandwidth }
-              in
-              Some conn
-          ) acc
-        | `Sent_packet (pier, protocol) ->
-          Conn_id_map.update pier.conn_id (function
-            | None -> None (*shouldn't happen*)
-            | Some conn ->
-              let sent_packets = succ conn.sent_packets in
-              Some { conn with sent_packets }
-          ) acc
-        | `Set_lost_packets (pier, n) ->
-          Conn_id_map.update pier.conn_id (function
-            | None -> None 
-            | Some conn -> Some { conn with lost_packets = Some n }
-          ) acc
-        | `Set_delayed_packets (pier, n) ->
-          Conn_id_map.update pier.conn_id (function
-            | None -> None 
-            | Some conn -> Some { conn with delayed_packets = Some n }
-          ) acc
+                  Some conn
+              ) acc
+            | `Sent_packet (pier, protocol) ->
+              Conn_id_map.update pier.conn_id (function
+                | None -> None (*shouldn't happen*)
+                | Some conn ->
+                  let sent_packets = succ conn.sent_packets in
+                  Some { conn with sent_packets }
+              ) acc
+          end
 
     end
 
@@ -513,36 +523,23 @@ module Notty_ui
       | event
     ]
 
-    let (e : all_events E.t), eupd = E.create ()
+    let (e : event E.t), eupd = E.create ()
 
-    let sample_at_tick extract = 
+    let sampled_s =
       sampled_e
-      |> E.fmap extract
-      |> E.map Option.some
-      |> S.hold None
-      |> S.sample (fun _ e -> e) Tick.e
-      |> E.fmap Fun.id
-
-    let e : all_events E.t =
-      let lost_packets_sampled_e =
-        let extract = function
-          | `Set_lost_packets _ as v -> Some v
-          | _ -> None
-        in
-        sample_at_tick extract
-      in
-      let delayed_packets_sampled_e =
-        let extract = function
-          | `Set_delayed_packets _ as v -> Some v
-          | _ -> None
-        in
-        sample_at_tick extract
-      in
-      E.select [
-        e;
-        lost_packets_sampled_e;
-        delayed_packets_sampled_e;
-      ]
+      |> E.fold (fun acc -> function
+        | `Set_lost_packets (pier, lost_packets) ->
+          Conn_id_map.update pier.conn_id (function
+            | None -> Some { lost_packets; delayed_packets = 0 }
+            | Some (v:Data.sampled_latest) -> Some { v with lost_packets }
+          ) acc
+        | `Set_delayed_packets (pier, delayed_packets) -> 
+          Conn_id_map.update pier.conn_id (function
+            | None -> Some { lost_packets = 0; delayed_packets }
+            | Some (v:Data.sampled_latest) -> Some { v with delayed_packets }
+          ) acc
+      ) Conn_id_map.empty
+      |> S.hold ~eq:Eq.never Conn_id_map.empty
 
     let latencies_e =
       let open Protocol_msg.T in
@@ -600,12 +597,17 @@ module Notty_ui
 
     let connections_e =
       let side = Side.v in
+      let sampling_e = E.select [
+        Tick.e |> E.map (fun v -> `Tick v);
+        e |> E.map (fun v -> `Event v);
+      ] in
       let sampled_s =
-        S.l2 ~eq:Eq.never Tuple.mk2
+        S.l3 ~eq:Eq.never Tuple.mk3
           latencies_s
           bandwidths_s
+          sampled_s
       in
-      S.sample Tuple.mk2 e sampled_s
+      S.sample Tuple.mk2 sampling_e sampled_s
       |> E.fold (Data.Calc.connection_state ~side) Conn_id_map.empty
 
     let connections_s = S.hold ~eq:Eq.never Conn_id_map.empty connections_e
