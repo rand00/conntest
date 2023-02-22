@@ -44,6 +44,9 @@ to simulate how your production-unikernels will be connected.
     Try out different values - packets bigger than `MTU` will be fragmented at the `IP` layer;
     where if a fragment is lost, the whole datagram is lost.
 * Latency monitoring (calculated as half the roundtrip time).
+* `UDP` statistics:
+  * lost packets 
+  * packets out of order
 * Choose between several different CLI UIs - currently `notty` and `log` 
   (`log` doesn't show stats for now, just logs packets).
   * The UI's are fully abstracted away from the `conntest` protocol, so new ones 
@@ -51,9 +54,6 @@ to simulate how your production-unikernels will be connected.
 
 ### To do
 * `UDP` support for resending lost packets, including lost ack's
-* More stats:
-  * lost packets (`UDP`)
-  * packets out of order (`UDP`)
 * Show stats via alternative simple textual output. This is useful if you run your unikernel 
   via e.g. `albatross` which currently splits console output on newlines.
 * Add structured data logging output. Usecases:
