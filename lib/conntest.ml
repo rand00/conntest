@@ -324,12 +324,14 @@ module Make
           *)
           | `Normal ->
             let received_packets = succ received_packets in
-            begin (*Sending an `Ack *)
-              if received_packets mod ack_receiver_bound = 0 then (
-                Log.debug (fun m -> m "feed_source: sending `Ack");
-                send_ack ~ack_index:ring_field.packet_index
-              ) else Lwt.return (Ok ())
-            end >>= fun send_ack_result ->
+            let send_ack_result_t = 
+              begin 
+                if received_packets mod ack_receiver_bound = 0 then (
+                  Log.debug (fun m -> m "feed_source: sending `Ack");
+                  send_ack ~ack_index:ring_field.packet_index
+                ) else Lwt.return (Ok ())
+              end
+            in
             Log.debug (fun m -> m "feed_source: UDP pkt recvd");
             let expected_packet_index =
               match Ring.get_latest ring with
@@ -377,6 +379,7 @@ module Make
                 *)
               )
             in
+            send_ack_result_t >>= fun send_ack_result ->
             (*> goto perf:
               * is it possible to start iterating from index in ring that is after
                 last_feeded_packet_index?
@@ -393,6 +396,7 @@ module Make
               if packet_index_is_newer && not seen_empty_data then
                 (*> Note: The user receives errors from 'ack'-writing on 'read'*)
                 let data =
+                  (*> goto fix; possibly ack-result is passed several times ...*)
                   send_ack_result |> Result.map (fun () -> 
                     `Data (Option.get ring_field'.data)
                   )
@@ -498,12 +502,19 @@ module Make
             let meta = header.Packet.T.meta in
             { data; packet_index; meta }
           in
-          Lwt_mvar.put flow.sink ring_field
+          (*>note perf: is async, so UDP.listen doesn't block on this
+            before reading next packet
+            ... the order of Lwt_mvar.put waiters is kept
+              .. (will be okay if not ordered, as Ring reorders)
+          *)
+          Lwt.async (fun () -> Lwt_mvar.put flow.sink ring_field);
+          Lwt.return_unit
       end
 
     let listen ~port user_callback =
       let callback ~src ~dst ~src_port data =
         let data_len = Cstruct.length data in
+        (*> goto copy can be removed when lib is fixed (maybe now)*)
         let data_copy = Cstruct.(create data_len) in
         Cstruct.blit data 0 data_copy 0 data_len;
         (*> gomaybe; as we do this, and let upper layer protocol reparse
