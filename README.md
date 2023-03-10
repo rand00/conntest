@@ -72,6 +72,14 @@ git clone https://github.com/rand00/conntest
 cd conntest
 mirage configure -t <TARGET> -f mirage/config.ml && make depend && mirage build -f mirage/config.ml
 ```
+Note that the current version of ocaml(v5.0.0) is not yet compatible with with mirage, so do well to switch to v4.14.1 using the commands below.
+```
+opam switch create mirage 4.14.1
+```
+We then update the new opam environment.
+```
+eval $(opam env --switch=mirage) 
+```
 Targets:
 * For `spt` you need to run GNU/Linux and install `solo5`. 
 * For `hvt` you need a baremetal server (i.e. supporting virtualization) or a VPS supporting nested virtualization. Also depends on `solo5`.
