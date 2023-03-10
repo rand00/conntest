@@ -167,7 +167,7 @@ module Make
 
     type partial_flow = {
       is_client : bool;
-      sink : ring_field Lwt_mvar.t;
+      sink : ring_field Lwt_stream.t;
       source : (Cstruct.t Mirage_flow.or_eof, err) result bounded_stream;
       port : int;
       pier : Ipaddr.t;
@@ -181,7 +181,7 @@ module Make
     (*> goto maybe; [sink, source, feeder] could be a single abstraction*)
     type t = {
       is_client : bool;
-      sink : ring_field Lwt_mvar.t;
+      sink : ring_field Lwt_stream.t;
       source : (Cstruct.t Mirage_flow.or_eof, err) result bounded_stream;
       feeder : unit Lwt.t;
       port : int;
@@ -287,7 +287,7 @@ module Make
               O.Listen.set_delayed_packets ~pier delayed_packets;
             )
         end;
-        Lwt_mvar.take flow.sink >>= fun ring_field ->
+        Lwt_stream.take flow.sink >>= fun ring_field ->
         begin match ring_field.meta with
           | `Ack ack_index ->
             Log.debug (fun m -> m "feed_source: received `Ack (i=%d)"
@@ -449,7 +449,7 @@ module Make
               { data; packet_index; meta }
             in
             let conn_id = ref None in
-            let sink = Lwt_mvar.create ring_field in
+            let sink = Lwt_stream.create ring_field in
             let source = Lwt_stream.create_bounded bounded_stream_size in
             let writev_ctx =
               { dst = src; dst_port = src_port; src_port = port } in
@@ -504,10 +504,10 @@ module Make
           in
           (*>note perf: is async, so UDP.listen doesn't block on this
             before reading next packet
-            ... the order of Lwt_mvar.put waiters is kept
+            ... the order of Lwt_stream.put waiters is kept
               .. (will be okay if not ordered, as Ring reorders)
           *)
-          Lwt.async (fun () -> Lwt_mvar.put flow.sink ring_field);
+          Lwt.async (fun () -> Lwt_stream.put flow.sink ring_field);
           Lwt.return_unit
       end
 
@@ -573,7 +573,7 @@ module Make
     let create_connection ~id (pier, pier_port) =
       let conn_id_client = id in
       let conn_id = ref (Some conn_id_client) in
-      let sink = Lwt_mvar.create_empty () in
+      let sink = Lwt_stream.create_empty () in
       let source = Lwt_stream.create_bounded bounded_stream_size in
       (*> goto handle that user shouldn't create a server-listening port that
         can be allocated here as well*)
