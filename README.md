@@ -150,4 +150,3 @@ ip link set tap101 master service
 ip link
 bridge link
 ```
-You can run this script by saving the contents to a file (e.g., `network_setup.sh`), making it executable (e.g., `chmod +x network_setup.sh`), and then executing it as a superuser (e.g., `sudo ./network_setup.sh`).
