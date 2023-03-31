@@ -347,6 +347,7 @@ module Make
                    .. and ring shouldn't be long
                 *)
                 Log.debug (fun m -> m "feed_source: packet_index_diff < 0");
+                (*changes*)
                 let rec loop i =
                   (*Define a recursive function loop that takes an index i as an argument.*)
                   match Ring.wrap_reverse_i len (i + 1) with
@@ -377,7 +378,7 @@ module Make
                      using wrap_reverse_i, and finally extracting the value from the resulting
                       Option using Option.get.*)
                 
-
+                   (*end of changes*)
                 let did_set = ref false in
                 
             
