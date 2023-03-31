@@ -347,37 +347,6 @@ module Make
                    .. and ring shouldn't be long
                 *)
                 Log.debug (fun m -> m "feed_source: packet_index_diff < 0");
-                let rec loop i =
-                  (*Define a recursive function loop that takes an index i as an argument.*)
-                  match Ring.wrap_reverse_i len (i + 1) with
-                  | None -> ()
-                  | Some i' ->
-                    (*Use Ring.wrap_reverse_i to get the next index in the ring buffer in reverse 
-                       order. If None is returned (i.e., there are no more elements in the ring), e
-                       xit the function. Otherwise, assign the result to i'.*)
-                    
-                      if i' = start || (
-                        match f (Ring.get i' new_ring) with
-                        | Some v ->
-                            new_ring.ring.(i') <- v;
-                            true
-                        | None -> false
-                      ) then ()
-                      else loop i'
-                      (*iterates through the elements of a ring,
-                          applying a function to each element, and 
-                          updating the ring with the result if the 
-                            function returns a value, until it reaches 
-                          the start of the iteration or the function returns None.*)
-                in
-                loop (Ring.wrap_reverse_i len (start - 1) |> Option.get);
-                (*calls the recursive loop function with the index of the next element 
-                   in the ring to be processed. The index is obtained by first subtracting
-                    1 from the starting index (start - 1), then wrapping it around the ring
-                     using wrap_reverse_i, and finally extracting the value from the resulting
-                      Option using Option.get.*)
-                
-
                 let did_set = ref false in
                 (*> goto perf; could use something like 'find_map_rev'
                   * which would try the latest packets first -
