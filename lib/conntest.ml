@@ -507,7 +507,7 @@ module Make
             ... the order of Lwt_mvar.put waiters is kept
               .. (will be okay if not ordered, as Ring reorders)
           *)
-          Lwt.async (fun () -> Lwt_mvar.put flow.sink ring_field);
+          Lwt_stream.push flow.sink ring_field;
           Lwt.return_unit
       end
 
