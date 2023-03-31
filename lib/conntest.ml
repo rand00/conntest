@@ -167,7 +167,7 @@ module Make
 
     type partial_flow = {
       is_client : bool;
-      sink : ring_field Lwt_mvar.t;
+      sink : ring_field Lwt_stream.t;
       source : (Cstruct.t Mirage_flow.or_eof, err) result bounded_stream;
       port : int;
       pier : Ipaddr.t;
@@ -181,7 +181,7 @@ module Make
     (*> goto maybe; [sink, source, feeder] could be a single abstraction*)
     type t = {
       is_client : bool;
-      sink : ring_field Lwt_mvar.t;
+      sink : ring_field Lwt_stream.t;
       source : (Cstruct.t Mirage_flow.or_eof, err) result bounded_stream;
       feeder : unit Lwt.t;
       port : int;
