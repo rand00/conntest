@@ -287,7 +287,7 @@ module Make
               O.Listen.set_delayed_packets ~pier delayed_packets;
             )
         end;
-        Lwt_stream.get flow.sink >>= fun ring_field ->
+        Lwt_stream.get_available flow.sink >>= fun ring_field ->
         begin match ring_field.meta with
           | `Ack ack_index ->
             Log.debug (fun m -> m "feed_source: received `Ack (i=%d)"
