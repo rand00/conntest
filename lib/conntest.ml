@@ -348,31 +348,30 @@ module Make
                 *)
                 Log.debug (fun m -> m "feed_source: packet_index_diff < 0");
                 (*latest*)
-                let map_rev_shortcircuit f ring =
-                  let len = Ring.length ring in
-                  let new_ring = Ring.copy ring in
-                  let start = Ring.get_start ring in
-                  let rec loop i ring_acc =
-                    match Ring.wrap_reverse_i len (i + 1) with
-                    | None -> ring_acc
-                    | Some i' ->
-                      if i' = start || match Ring.get i' new_ring with
-                        | None -> true
-                        | Some v -> match f v with
-                          | None -> true
-                          | Some v' ->
-                            let new_ring' = Ring.set i' v' new_ring in
-                            loop i' new_ring'
-                      then ring_acc
-                      else loop i' ring_acc
-                  in
-                  let start_i = Option.map_default (fun x -> x - 1) (len - 1) (Ring.wrap_reverse_i len start) in
-                  let final_ring = loop start_i new_ring in
-                  Ring.sub final_ring 0 (Ring.length ring) in                
                 
                 let did_set = ref false in
                 
-            
+                let map_rev_shortcircuit f r =
+                  let i = ref 0 in
+                  let len = Ring.length r in
+                  let ring_copy = Array.copy r.Ring.ring in
+                  while !i < len do
+                    let idx_opt = Ring.wrap_reverse_i r !i in
+                    match idx_opt with
+                    | None -> i := len
+                    | Some idx ->
+                      let value_opt = Ring.get_previous r !i in
+                      match value_opt with
+                      | None -> i := len
+                      | Some x ->
+                        match f x with
+                        | None -> i := len
+                        | Some y ->
+                          ring_copy.(idx) <- Some y; i := succ !i
+                  done;
+                  { r with Ring.ring = ring_copy }
+                in
+                
   
                   
                 (*> goto perf; could use something like 'find_map_rev'
