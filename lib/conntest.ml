@@ -132,6 +132,27 @@ module Make
       done;
       !acc
 
+      let map_rev_shortcircuit f r =
+        let i = ref 0 in
+        let len = length r in
+        let ring_copy = Array.copy r.ring in
+        while !i < len do
+          let idx_opt = wrap_reverse_i r !i in
+          match idx_opt with
+          | None -> i := len
+          | Some idx ->
+            let value_opt = get_previous r !i in
+            match value_opt with
+            | None -> ring_copy.(idx) <- None; i := succ !i
+            | Some x ->
+              match f x with
+              | None -> i := len
+              | Some y ->
+                ring_copy.(idx) <- Some y; i := succ !i
+        done;
+        { r with ring = ring_copy }
+    
+
   end
 
   module Udp_flow = struct
