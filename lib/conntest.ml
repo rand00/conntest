@@ -359,7 +359,7 @@ module Make
                     | Some idx ->
                       let value_opt = Ring.get_previous r !i in
                       match value_opt with
-                      | None -> i := len
+                      | None -> ring_copy.(idx) <- None; i := succ !i
                       | Some x ->
                         match f x with
                         | None -> i := len
@@ -367,6 +367,7 @@ module Make
                           ring_copy.(idx) <- Some y; i := succ !i
                   done;
                   { r with Ring.ring = ring_copy }
+                
                 in
                 (*> goto perf; could use something like 'find_map_rev'
                   * which would try the latest packets first -
